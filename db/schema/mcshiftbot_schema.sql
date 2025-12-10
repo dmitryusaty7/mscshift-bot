@@ -1265,6 +1265,18 @@ CREATE TABLE public.ships (
 ALTER TABLE public.ships OWNER TO postgres;
 
 --
+-- Name: vessels; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.vessels (
+    "ID" bigint NOT NULL,
+    "NAME" text NOT NULL
+);
+
+
+ALTER TABLE public.vessels OWNER TO postgres;
+
+--
 -- Name: ships_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
 --
 
@@ -1283,6 +1295,27 @@ ALTER TABLE public.ships_id_seq OWNER TO postgres;
 --
 
 ALTER SEQUENCE public.ships_id_seq OWNED BY public.ships.id;
+
+
+--
+-- Name: vessels_id_seq; Type: SEQUENCE; Schema: public; Owner: postgres
+--
+
+CREATE SEQUENCE public.vessels_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER TABLE public.vessels_id_seq OWNER TO postgres;
+
+--
+-- Name: vessels_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
+--
+
+ALTER SEQUENCE public.vessels_id_seq OWNED BY public.vessels."ID";
 
 
 --
@@ -1466,6 +1499,13 @@ ALTER TABLE ONLY public.shifts ALTER COLUMN id SET DEFAULT nextval('public.shift
 --
 
 ALTER TABLE ONLY public.ships ALTER COLUMN id SET DEFAULT nextval('public.ships_id_seq'::regclass);
+
+
+--
+-- Name: vessels ID; Type: DEFAULT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.vessels ALTER COLUMN "ID" SET DEFAULT nextval('public.vessels_id_seq'::regclass);
 
 
 --
@@ -1913,6 +1953,14 @@ ALTER TABLE ONLY public.ships
 
 ALTER TABLE ONLY public.ships
     ADD CONSTRAINT ships_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: vessels vessels_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.vessels
+    ADD CONSTRAINT vessels_pkey PRIMARY KEY ("ID");
 
 
 --
