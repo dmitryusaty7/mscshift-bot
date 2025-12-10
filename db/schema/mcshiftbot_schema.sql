@@ -23,45 +23,6 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
--- Name: Ships; Type: TABLE; Schema: public; Owner: mscbot
---
-
-CREATE TABLE public."Ships" (
-    id integer NOT NULL,
-    status character varying(255) DEFAULT 'draft'::character varying NOT NULL,
-    sort integer,
-    user_created uuid,
-    date_created timestamp with time zone,
-    user_updated uuid,
-    date_updated timestamp with time zone
-);
-
-
-ALTER TABLE public."Ships" OWNER TO mscbot;
-
---
--- Name: Ships_id_seq; Type: SEQUENCE; Schema: public; Owner: mscbot
---
-
-CREATE SEQUENCE public."Ships_id_seq"
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER TABLE public."Ships_id_seq" OWNER TO mscbot;
-
---
--- Name: Ships_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: mscbot
---
-
-ALTER SEQUENCE public."Ships_id_seq" OWNED BY public."Ships".id;
-
-
---
 -- Name: brigadiers; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -1361,13 +1322,6 @@ ALTER SEQUENCE public.workers_id_seq OWNED BY public.workers.id;
 
 
 --
--- Name: Ships id; Type: DEFAULT; Schema: public; Owner: mscbot
---
-
-ALTER TABLE ONLY public."Ships" ALTER COLUMN id SET DEFAULT nextval('public."Ships_id_seq"'::regclass);
-
-
---
 -- Name: brigadiers id; Type: DEFAULT; Schema: public; Owner: postgres
 --
 
@@ -1519,14 +1473,6 @@ ALTER TABLE ONLY public.ships ALTER COLUMN id SET DEFAULT nextval('public.ships_
 --
 
 ALTER TABLE ONLY public.workers ALTER COLUMN id SET DEFAULT nextval('public.workers_id_seq'::regclass);
-
-
---
--- Name: Ships Ships_pkey; Type: CONSTRAINT; Schema: public; Owner: mscbot
---
-
-ALTER TABLE ONLY public."Ships"
-    ADD CONSTRAINT "Ships_pkey" PRIMARY KEY (id);
 
 
 --
@@ -2461,22 +2407,6 @@ ALTER TABLE ONLY public.shifts
 
 ALTER TABLE ONLY public.shifts
     ADD CONSTRAINT shifts_ship_id_fkey FOREIGN KEY (ship_id) REFERENCES public.ships(id);
-
-
---
--- Name: Ships ships_user_created_foreign; Type: FK CONSTRAINT; Schema: public; Owner: mscbot
---
-
-ALTER TABLE ONLY public."Ships"
-    ADD CONSTRAINT ships_user_created_foreign FOREIGN KEY (user_created) REFERENCES public.directus_users(id);
-
-
---
--- Name: Ships ships_user_updated_foreign; Type: FK CONSTRAINT; Schema: public; Owner: mscbot
---
-
-ALTER TABLE ONLY public."Ships"
-    ADD CONSTRAINT ships_user_updated_foreign FOREIGN KEY (user_updated) REFERENCES public.directus_users(id);
 
 
 --
