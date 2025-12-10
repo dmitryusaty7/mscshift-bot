@@ -13,8 +13,11 @@ jobs:
       - name: Run deploy script on server
         uses: appleboy/ssh-action@v0.1.10
         with:
-          host: ${{ secrets.MCSHIFTBOT_SERVER_HOST }}
-          username: root
-          key: ${{ secrets.MCSHIFTBOT_SERVER_KEY }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            /opt/mcshiftbot/infra/deploy/deploy.sh
+            cd /opt/mcshiftbot
+            git pull origin main
+            chmod +x infra/deploy/deploy.sh
+            ./infra/deploy/deploy.sh
