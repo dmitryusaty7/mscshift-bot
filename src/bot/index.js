@@ -1,21 +1,9 @@
-const { Telegraf, Scenes, session } = require('telegraf')
+const TelegramBot = require('node-telegram-bot-api')
 const { registerStartHandler } = require('./handlers/start.handler')
-const { createRegisterScene } = require('../scenes/register.scene')
 
 // Создаём экземпляр бота и регистрируем обработчики
 function createBot({ token, logger, repositories, messages }) {
-  const bot = new Telegraf(token)
-
-  const registerScene = createRegisterScene({
-    messages,
-    brigadiersRepo: repositories.brigadiers,
-    logger,
-  })
-
-  const stage = new Scenes.Stage([registerScene])
-
-  bot.use(session())
-  bot.use(stage.middleware())
+  const bot = new TelegramBot(token, { polling: true })
 
   registerStartHandler({
     bot,
@@ -23,18 +11,10 @@ function createBot({ token, logger, repositories, messages }) {
     logger,
     messages,
   })
-
-  bot.catch((error, ctx) => {
-    logger.error('Глобальная ошибка бота', {
-      error: error.message,
-      updateType: ctx.updateType,
-    })
+  
+  bot.on('polling_error', (error) => {
+    logger.error('Ошибка long polling', { error: error.message })
   })
-
-  bot.launch()
-
-  process.once('SIGINT', () => bot.stop('SIGINT'))
-  process.once('SIGTERM', () => bot.stop('SIGTERM'))
 
   return bot
 }

@@ -1,15 +1,16 @@
 const { USER_STATES, setUserState } = require('../middlewares/session')
-const { mainMenu } = require('../main-menu')
 
 // Обработчик /start для входа в систему
 function registerStartHandler({ bot, brigadiersRepo, logger, messages }) {
-  bot.start(async (ctx) => {
-    const telegramId = ctx.from?.id
-    const firstName = ctx.from?.first_name || ''
+  bot.onText(/\/start/, async (msg) => {
+    const chatId = msg.chat.id
+    const telegramId = msg.from?.id
+    const firstName = msg.from?.first_name || ''
 
     if (!telegramId) {
       logger.error('Не удалось определить telegram_id у пользователя')
-      await ctx.reply(messages.systemError)
+      await bot.sendMessage(chatId, messages.systemError)
+
       return
     }
 
@@ -18,16 +19,20 @@ function registerStartHandler({ bot, brigadiersRepo, logger, messages }) {
 
       if (brigadier) {
         setUserState(telegramId, USER_STATES.AUTHORIZED)
-        await ctx.reply(messages.welcomeExistingUser(firstName))
-        await mainMenu(ctx, messages)
+        await bot.sendMessage(chatId, messages.welcomeExistingUser(firstName))
+        await bot.sendMessage(chatId, messages.mainPanelRedirect)
+        // TODO: Block 2 — перейти в основную панель
         return
       }
 
       setUserState(telegramId, USER_STATES.REGISTRATION)
-      await ctx.scene.enter('register')
+      await bot.sendMessage(chatId, messages.welcomeNewUser)
+      await bot.sendMessage(chatId, messages.registrationRedirect)
+      // TODO: Block 1 — запуск регистрации
     } catch (error) {
       logger.error('Ошибка обработки команды /start', { error: error.message })
-      await ctx.reply(messages.systemError)
+      await bot.sendMessage(chatId, messages.systemError)
+
     }
   })
 }
