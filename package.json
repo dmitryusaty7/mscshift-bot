@@ -11,6 +11,11 @@
     "url": "https://github.com/dmitryusaty7/mscshift-bot.git"
   },
   "author": "MSC",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "form-data": "^4.0.5",
+    "node-telegram-bot-api": "^0.67.0",
+    "pg": "^8.16.3"
+  }
 }
-
