@@ -11,7 +11,7 @@ function createBot({ token, logger, repositories, messages }) {
     logger,
     messages,
   })
-
+  
   bot.on('polling_error', (error) => {
     logger.error('Ошибка long polling', { error: error.message })
   })

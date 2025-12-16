@@ -10,6 +10,7 @@ function registerStartHandler({ bot, brigadiersRepo, logger, messages }) {
     if (!telegramId) {
       logger.error('Не удалось определить telegram_id у пользователя')
       await bot.sendMessage(chatId, messages.systemError)
+
       return
     }
 
@@ -31,6 +32,7 @@ function registerStartHandler({ bot, brigadiersRepo, logger, messages }) {
     } catch (error) {
       logger.error('Ошибка обработки команды /start', { error: error.message })
       await bot.sendMessage(chatId, messages.systemError)
+
     }
   })
 }
