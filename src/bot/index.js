@@ -4,6 +4,7 @@ const { registerPhotoHandler } = require('./handlers/photo.handler')
 const { registerRegistrationModule } = require('../modules/register')
 const { registerShiftMenuModule } = require('../modules/shift-menu')
 
+
 // Создаём экземпляр бота и регистрируем обработчики
 function createBot({ token, logger, repositories, messages, directusClient }) {
   const bot = new TelegramBot(token, { polling: true })
@@ -28,7 +29,7 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
     logger,
     messages,
   })
-
+  
   registerShiftMenuModule({
     bot,
     brigadiersRepo: repositories.brigadiers,
@@ -38,7 +39,6 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
     logger,
     messages,
   })
-
   bot.on('polling_error', (error) => {
     logger.error('Ошибка long polling', { error: error.message })
   })
