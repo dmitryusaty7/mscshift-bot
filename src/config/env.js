@@ -14,6 +14,16 @@ function validateEnv() {
       user: requireEnv('PG_USER'),
       password: requireEnv('PG_PASSWORD'),
     },
+    directus: {
+      baseUrl: requireEnv('DIRECTUS_URL'),
+      token: requireEnv('DIRECTUS_STATIC_TOKEN'),
+      collections: {
+        users: process.env.DIRECTUS_USERS_COLLECTION || 'users',
+        shifts: process.env.DIRECTUS_SHIFTS_COLLECTION || 'shifts',
+        shiftPhotos: process.env.DIRECTUS_SHIFT_PHOTOS_COLLECTION || 'shift_photos',
+      },
+      defaultShiftStatus: process.env.DIRECTUS_SHIFT_DEFAULT_STATUS || undefined,
+    },
   }
 
   return config

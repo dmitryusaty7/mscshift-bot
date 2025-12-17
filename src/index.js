@@ -4,6 +4,7 @@ const { createBot } = require('./bot')
 const { createDbPool, testDbConnection } = require('./db')
 const { createBrigadiersRepo } = require('./db/brigadiers.repo')
 const { createLogger } = require('./utils/logger')
+const { createDirectusClient } = require('./directus')
 
 const logger = createLogger()
 const config = validateEnv()
@@ -22,6 +23,7 @@ async function bootstrap() {
   }
 
   const brigadiersRepo = createBrigadiersRepo(pool)
+  const directusClient = createDirectusClient(config.directus, logger)
 
   createBot({
     token: config.bot.token,
@@ -30,6 +32,7 @@ async function bootstrap() {
       brigadiers: brigadiersRepo,
     },
     messages,
+    directusClient,
   })
 
   logger.info('Бот MSCShift запущен и готов принимать команды')

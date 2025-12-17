@@ -28,6 +28,7 @@ src/
   db/
     index.js              // создание пула PostgreSQL
     brigadiers.repo.js    // запросы к таблице brigadiers
+  directus/               // клиент Directus для работы с файлами и сущностями
   messages/
     index.js              // все тексты бота
   config/
@@ -41,11 +42,15 @@ src/
 - **Блок 0** — реализован: команда `/start`, поиск бригадира в БД, маршрутизация к регистрации или основной панели (заглушки)
 - **Блок 1** — TODO: сценарий регистрации
 - **Блок 2** — TODO: основная панель бригадира
+- **Загрузка фото** — реализовано: получение фото от пользователя, отправка в Directus `/files`,
+  создание записи в `shift_photos` с привязкой к смене и пользователю
 
 ## Запуск
 1. Скопировать пример окружения и заполнить переменные:
    - `TELEGRAM_BOT_TOKEN`
    - `PG_HOST`, `PG_PORT`, `PG_DATABASE`, `PG_USER`, `PG_PASSWORD`
+   - `DIRECTUS_URL`, `DIRECTUS_STATIC_TOKEN`
+   - (опционально) `DIRECTUS_USERS_COLLECTION`, `DIRECTUS_SHIFTS_COLLECTION`, `DIRECTUS_SHIFT_PHOTOS_COLLECTION`, `DIRECTUS_SHIFT_DEFAULT_STATUS`
 2. Установить зависимости:
    ```bash
    npm install
