@@ -3,6 +3,9 @@ const messages = require('./messages')
 const { createBot } = require('./bot')
 const { createDbPool, testDbConnection } = require('./db')
 const { createBrigadiersRepo } = require('./db/brigadiers.repo')
+const { createShipsRepo } = require('./db/ships.repo')
+const { createShiftsRepo } = require('./db/shifts.repo')
+const { createHoldsRepo } = require('./db/holds.repo')
 const { createLogger } = require('./utils/logger')
 const { createDirectusClient } = require('./directus')
 
@@ -23,6 +26,9 @@ async function bootstrap() {
   }
 
   const brigadiersRepo = createBrigadiersRepo(pool)
+  const shipsRepo = createShipsRepo(pool)
+  const shiftsRepo = createShiftsRepo(pool)
+  const holdsRepo = createHoldsRepo(pool)
   const directusClient = createDirectusClient(config.directus, logger)
 
   createBot({
@@ -30,6 +36,9 @@ async function bootstrap() {
     logger,
     repositories: {
       brigadiers: brigadiersRepo,
+      ships: shipsRepo,
+      shifts: shiftsRepo,
+      holds: holdsRepo,
     },
     messages,
     directusClient,
