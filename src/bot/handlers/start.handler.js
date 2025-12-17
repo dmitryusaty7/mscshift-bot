@@ -2,7 +2,7 @@ const { USER_STATES, setUserState } = require('../middlewares/session')
 const { startRegistrationFlow } = require('../../modules/register')
 
 // Обработчик /start для входа в систему
-function registerStartHandler({ bot, brigadiersRepo, logger, messages }) {
+function registerStartHandler({ bot, brigadiersRepo, logger, messages, showMainPanel }) {
   bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id
     const telegramId = msg.from?.id
@@ -19,10 +19,13 @@ function registerStartHandler({ bot, brigadiersRepo, logger, messages }) {
       const brigadier = await brigadiersRepo.findByTelegramId(String(telegramId))
 
       if (brigadier) {
-        setUserState(telegramId, USER_STATES.AUTHORIZED)
+        setUserState(telegramId, USER_STATES.MAIN_PANEL)
         await bot.sendMessage(chatId, messages.welcomeExistingUser(firstName))
-        await bot.sendMessage(chatId, messages.mainPanelRedirect)
-        // TODO: Block 2 — перейти в основную панель
+        if (showMainPanel) {
+          await showMainPanel({ bot, chatId, brigadier })
+        } else {
+          await bot.sendMessage(chatId, messages.mainPanelRedirect)
+        }
         return
       }
 

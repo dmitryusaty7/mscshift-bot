@@ -2,14 +2,15 @@ const { USER_STATES, getUserState, setUserState } = require('../bot/middlewares/
 
 // Этапы FSM для регистрации
 const REGISTRATION_STEPS = {
-  WAITING_FULL_NAME: 'WAITING_FULL_NAME',
+  WAITING_FIRST_NAME: 'WAITING_FIRST_NAME',
+  WAITING_LAST_NAME: 'WAITING_LAST_NAME',
 }
 
 // Простое хранение шагов регистрации в памяти
 const registrationSessions = new Map()
 
 // Регистрация обработчика шагов регистрации
-function registerRegistrationModule({ bot, brigadiersRepo, messages, logger }) {
+function registerRegistrationModule({ bot, brigadiersRepo, messages, logger, showMainPanel }) {
   bot.on('message', async (msg) => {
     const telegramId = msg.from?.id
     const chatId = msg.chat.id
@@ -23,11 +24,20 @@ function registerRegistrationModule({ bot, brigadiersRepo, messages, logger }) {
       return
     }
 
-    const currentStep = registrationSessions.get(telegramId)?.step || REGISTRATION_STEPS.WAITING_FULL_NAME
+    const currentStep = registrationSessions.get(telegramId)?.step || REGISTRATION_STEPS.WAITING_FIRST_NAME
 
     switch (currentStep) {
-      case REGISTRATION_STEPS.WAITING_FULL_NAME:
-        await handleFullNameStep({
+      case REGISTRATION_STEPS.WAITING_FIRST_NAME:
+        await handleFirstNameStep({
+          bot,
+          msg,
+          telegramId,
+          chatId,
+          messages,
+        })
+        break
+      case REGISTRATION_STEPS.WAITING_LAST_NAME:
+        await handleLastNameStep({
           bot,
           msg,
           telegramId,
@@ -35,86 +45,118 @@ function registerRegistrationModule({ bot, brigadiersRepo, messages, logger }) {
           brigadiersRepo,
           messages,
           logger,
+          showMainPanel,
         })
         break
       default:
-        registrationSessions.set(telegramId, { step: REGISTRATION_STEPS.WAITING_FULL_NAME })
-        await bot.sendMessage(chatId, messages.registration.askFullName)
+        registrationSessions.set(telegramId, { step: REGISTRATION_STEPS.WAITING_FIRST_NAME })
+        await bot.sendMessage(chatId, messages.registration.askFirstName)
     }
   })
 }
 
 // Запускаем регистрацию для нового пользователя
 async function startRegistrationFlow({ bot, chatId, telegramId, messages }) {
-  registrationSessions.set(telegramId, { step: REGISTRATION_STEPS.WAITING_FULL_NAME })
+  setUserState(telegramId, USER_STATES.REGISTRATION)
+  registrationSessions.set(telegramId, { step: REGISTRATION_STEPS.WAITING_FIRST_NAME })
   await bot.sendMessage(chatId, messages.registration.intro)
-  await bot.sendMessage(chatId, messages.registration.askFullName)
+  await bot.sendMessage(chatId, messages.registration.askFirstName)
 }
 
-// Обрабатываем ввод ФИО
-async function handleFullNameStep({ bot, msg, telegramId, chatId, brigadiersRepo, messages, logger }) {
-  const fullName = msg.text?.trim()
+// Обрабатываем ввод имени
+async function handleFirstNameStep({ bot, msg, telegramId, chatId, messages }) {
+  const firstNameRaw = msg.text?.trim()
 
-  if (!fullName) {
-    await bot.sendMessage(chatId, messages.registration.invalidFullName)
+  if (!isValidName(firstNameRaw)) {
+    await bot.sendMessage(chatId, messages.registration.invalidName)
     return
   }
 
-  const parsedName = parseFullName(fullName)
+  const firstName = normalizeName(firstNameRaw)
 
-  if (!parsedName) {
-    await bot.sendMessage(chatId, messages.registration.invalidFullName)
+  registrationSessions.set(telegramId, {
+    step: REGISTRATION_STEPS.WAITING_LAST_NAME,
+    data: { firstName },
+  })
+
+  await bot.sendMessage(chatId, messages.registration.askLastName)
+}
+
+// Обрабатываем ввод фамилии
+async function handleLastNameStep({ bot, msg, telegramId, chatId, brigadiersRepo, messages, logger, showMainPanel }) {
+  const lastNameRaw = msg.text?.trim()
+
+  if (!isValidName(lastNameRaw)) {
+    await bot.sendMessage(chatId, messages.registration.invalidName)
     return
   }
+
+  const session = registrationSessions.get(telegramId)
+
+  if (!session || !session.data?.firstName) {
+    registrationSessions.set(telegramId, { step: REGISTRATION_STEPS.WAITING_FIRST_NAME })
+    await bot.sendMessage(chatId, messages.registration.askFirstName)
+    return
+  }
+
+  const lastName = normalizeName(lastNameRaw)
 
   try {
-    await brigadiersRepo.create({
+    const brigadier = await brigadiersRepo.create({
       telegramId: String(telegramId),
-      firstName: parsedName.firstName,
-      lastName: parsedName.lastName,
+      firstName: session.data.firstName,
+      lastName,
     })
 
-    setUserState(telegramId, USER_STATES.AUTHORIZED)
+    setUserState(telegramId, USER_STATES.MAIN_PANEL)
     registrationSessions.delete(telegramId)
 
-    await bot.sendMessage(chatId, messages.registration.completed(`${parsedName.firstName} ${parsedName.lastName}`))
-    await bot.sendMessage(chatId, messages.mainPanelRedirect)
-    // TODO: перейти в блок основной панели
+    const fullName = `${lastName} ${session.data.firstName}`
+
+    await bot.sendMessage(chatId, messages.registration.completed(fullName))
+    if (showMainPanel) {
+      await showMainPanel({ bot, chatId, brigadier })
+    } else {
+      await bot.sendMessage(chatId, messages.mainPanelRedirect)
+      // TODO: перейти в блок основной панели
+    }
   } catch (error) {
     logger.error('Ошибка регистрации бригадира', { error: error.message })
     await bot.sendMessage(chatId, messages.systemError)
     // TODO: уведомить админов о падении
   }
 }
+// Валидация имени/фамилии: кириллица, 2-50 символов, первая буква заглавная
+function isValidName(value) {
+  if (!value) return false
 
-// Проверяем корректность ФИО: только кириллица, минимум имя и фамилия
-function parseFullName(fullName) {
-  const normalized = fullName.replace(/\s+/g, ' ').trim()
-  const parts = normalized.split(' ')
+  const normalized = value.trim().replace(/\s+/g, ' ')
 
-  if (parts.length < 2) {
-    return null
+  if (normalized.length < 2 || normalized.length > 50) {
+    return false
   }
 
-  const [firstName, ...lastNameParts] = parts
-
-  if (!isCyrillicWord(firstName) || lastNameParts.some((part) => !isCyrillicWord(part))) {
-    return null
-  }
-
-  return {
-    firstName: capitalize(firstName),
-    lastName: capitalize(lastNameParts.join(' ')),
-  }
+  return /^[А-ЯЁ][А-ЯЁа-яё\-\s]{1,49}$/u.test(normalized)
 }
 
-function isCyrillicWord(value) {
-  return /^[А-ЯЁа-яё-]{2,}$/.test(value)
+// Нормализация ФИО с заглавными буквами для составных частей
+function normalizeName(value) {
+  return value
+    .trim()
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .map((part) =>
+      part
+        .split('-')
+        .map((segment) => capitalize(segment))
+        .join('-')
+    )
+    .join(' ')
 }
 
-function capitalize(value) {
-  if (!value) return value
-  const lower = value.toLowerCase()
+function capitalize(segment) {
+  if (!segment) return segment
+  const lower = segment.toLowerCase()
   return `${lower.charAt(0).toUpperCase()}${lower.slice(1)}`
 }
 
