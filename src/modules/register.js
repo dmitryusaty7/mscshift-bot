@@ -126,7 +126,6 @@ async function handleLastNameStep({ bot, msg, telegramId, chatId, brigadiersRepo
     // TODO: уведомить админов о падении
   }
 }
-
 // Валидация имени/фамилии: кириллица, 2-50 символов, первая буква заглавная
 function isValidName(value) {
   if (!value) return false
