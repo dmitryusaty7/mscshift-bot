@@ -1,4 +1,5 @@
 const { USER_STATES, setUserState } = require('../middlewares/session')
+const { startRegistrationFlow } = require('../../modules/register')
 
 // Обработчик /start для входа в систему
 function registerStartHandler({ bot, brigadiersRepo, logger, messages }) {
@@ -27,12 +28,10 @@ function registerStartHandler({ bot, brigadiersRepo, logger, messages }) {
 
       setUserState(telegramId, USER_STATES.REGISTRATION)
       await bot.sendMessage(chatId, messages.welcomeNewUser)
-      await bot.sendMessage(chatId, messages.registrationRedirect)
-      // TODO: Block 1 — запуск регистрации
+      await startRegistrationFlow({ bot, chatId, telegramId, messages })
     } catch (error) {
       logger.error('Ошибка обработки команды /start', { error: error.message })
       await bot.sendMessage(chatId, messages.systemError)
-
     }
   })
 }
