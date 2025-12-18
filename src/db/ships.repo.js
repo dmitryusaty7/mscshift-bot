@@ -26,7 +26,7 @@ function createShipsRepo(pool) {
       RETURNING *
     `
 
-    const { rows } = await pool.query(query, [name, 'Active'])
+    const { rows } = await pool.query(query, [name, 'active'])
     return rows[0]
   }
 }
