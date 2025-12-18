@@ -1,9 +1,13 @@
 const { USER_STATES, setUserState, getUserState } = require('../bot/middlewares/session')
 const { formatDateHuman } = require('../utils/time')
+const { buildStatusesFromShift, isShiftComplete, statusIcon } = require('../utils/shift-status')
+
+const activeShiftKeyboardSessions = new Map()
 
 // TODO: Добавить аналитику по кликам в панели бригадира
 // TODO: Проверка на повторное открытие смены
 // TODO: Поддержка возврата из смены в главное меню
+// TODO: Собрать обратную связь по UX панели и зафиксировать быстрые улучшения
 
 // Регистрация обработчиков для Блока 2 — главная панель бригадира
 function registerMainPanelModule({
@@ -48,6 +52,11 @@ function registerMainPanelModule({
       return
     }
 
+    if (msg.text === messages.navigation.back) {
+      await openMainPanel({ bot, chatId, telegramId, brigadiersRepo, shiftsRepo, messages, logger })
+      return
+    }
+
     if (msg.text === messages.mainPanel.newShiftButton) {
       await handleNewShiftRequest({
         bot,
@@ -81,12 +90,6 @@ function registerMainPanelModule({
 
     if (!telegramId || !chatId || !action) {
       await bot.answerCallbackQuery(query.id)
-      return
-    }
-
-    if (action === 'back') {
-      await bot.answerCallbackQuery(query.id)
-      await openMainPanel({ bot, chatId, telegramId, brigadiersRepo, shiftsRepo, messages, logger })
       return
     }
 
@@ -140,6 +143,7 @@ async function openMainPanel({ bot, chatId, telegramId, brigadiersRepo, shiftsRe
       return
     }
 
+    await clearActiveShiftsKeyboardSession({ telegramId, bot, logger })
     await showMainPanel({ bot, chatId, brigadier, shiftsRepo, messages, telegramId })
 
     setUserState(telegramId, USER_STATES.MAIN_PANEL)
@@ -154,7 +158,7 @@ async function showMainPanel({ bot, chatId, brigadier, shiftsRepo, messages, tel
   const fullName = `${brigadier.last_name} ${brigadier.first_name}`.trim()
   const today = formatDateHuman(new Date())
   const activeShifts = await shiftsRepo.getActiveByBrigadier(brigadier.id)
-  const activeList = activeShifts.map((shift) => formatActiveShiftButton(shift))
+  const activeList = activeShifts.map((shift) => formatActiveShiftButton({ shift }))
 
   const panelText = messages.mainPanel.summary({
     fullName,
@@ -180,6 +184,8 @@ async function handleActiveShiftsRequest({ bot, chatId, telegramId, brigadiersRe
       return
     }
 
+    await clearActiveShiftsKeyboardSession({ telegramId, bot, logger })
+
     const activeShifts = await shiftsRepo.getActiveByBrigadier(brigadier.id)
 
     if (!activeShifts.length) {
@@ -187,23 +193,28 @@ async function handleActiveShiftsRequest({ bot, chatId, telegramId, brigadiersRe
       return
     }
 
-    const [latestShift, ...otherShifts] = activeShifts
-    const latestShiftLine = `${formatActiveShiftButton(latestShift)} - ✅`
-    const otherShiftButtons = otherShifts.map((shift) => ({
-      text: `${formatActiveShiftButton(shift)} ✍️`,
-      callback_data: `activeShift:${shift.id}`,
-    }))
+    const enrichedShifts = activeShifts.map((shift) => {
+      const textWithoutStatus = formatActiveShiftButton({ shift, withStatusIcon: false })
+      const statuses = buildStatusesFromShift(shift)
+      const statusMark = statusIcon(isShiftComplete(statuses))
 
-    const inlineKeyboard = [
-      ...otherShiftButtons.map((button) => [button]),
-      [{ text: messages.mainPanel.backButton, callback_data: 'back' }],
-    ]
+      return {
+        shift,
+        label: `${textWithoutStatus} ${statusMark}`,
+        textWithoutStatus,
+        statusMark,
+      }
+    })
+    const [latestShift, ...otherShifts] = enrichedShifts
+    const latestShiftLine = `${latestShift.textWithoutStatus} ${latestShift.statusMark}`
+    const inlineKeyboard = [latestShift, ...otherShifts].map((item) => [
+      { text: item.label, callback_data: `activeShift:${item.shift.id}` },
+    ])
 
-    await bot.sendMessage(
+    const sentMessage = await bot.sendMessage(
       chatId,
       messages.mainPanel.activeShiftsList({
         latestShiftLine,
-        otherLines: otherShiftButtons.map((button) => button.text),
       }),
       {
         reply_markup: {
@@ -211,6 +222,11 @@ async function handleActiveShiftsRequest({ bot, chatId, telegramId, brigadiersRe
         },
       },
     )
+
+    activeShiftKeyboardSessions.set(telegramId, {
+      chatId,
+      messageId: sentMessage.message_id,
+    })
   } catch (error) {
     logger.error('Ошибка при получении активных смен', { error: error.message })
     await bot.sendMessage(chatId, messages.systemError)
@@ -235,7 +251,7 @@ async function handleNewShiftRequest({
       return
     }
 
-    activeShiftKeyboardSessions.delete(telegramId)
+    await clearActiveShiftsKeyboardSession({ telegramId, bot, logger })
     setUserState(telegramId, USER_STATES.SHIFT_CREATION)
 
     await startShiftMenuFlow({
@@ -250,16 +266,35 @@ async function handleNewShiftRequest({
 
 // Формируем основную клавиатуру панели
 function buildMainKeyboard(messages) {
-  return [
-    [{ text: messages.mainPanel.newShiftButton }],
-    [{ text: messages.mainPanel.activeShiftsButton }],
-  ]
+  return [[{ text: messages.mainPanel.newShiftButton }], [{ text: messages.mainPanel.activeShiftsButton }], [{ text: messages.navigation.back }]]
 }
 
 // Формируем текст кнопки активной смены
-function formatActiveShiftButton(shift) {
+function formatActiveShiftButton({ shift, withStatusIcon = true }) {
   const date = new Date(shift.date)
-  return `${formatDateHuman(date)} — ${shift.ship_name} (трюмов: ${shift.holds_count})`
+  const statuses = buildStatusesFromShift(shift)
+  const completenessIcon = withStatusIcon ? ` ${statusIcon(isShiftComplete(statuses))}` : ''
+  return `${formatDateHuman(date)} — ${shift.ship_name} (трюмов: ${shift.holds_count})${completenessIcon}`
+}
+
+// Скрываем inline-клавиатуры со списком активных смен, чтобы не оставлять лишние кнопки
+async function clearActiveShiftsKeyboardSession({ telegramId, bot, logger }) {
+  const session = activeShiftKeyboardSessions.get(telegramId)
+
+  if (!session) {
+    return
+  }
+
+  try {
+    await bot.editMessageReplyMarkup(
+      { inline_keyboard: [] },
+      { chat_id: session.chatId, message_id: session.messageId },
+    )
+  } catch (error) {
+    logger?.warn('Не удалось очистить клавиатуру активных смен', { error: error.message })
+  } finally {
+    activeShiftKeyboardSessions.delete(telegramId)
+  }
 }
 
 module.exports = {
