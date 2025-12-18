@@ -1,6 +1,7 @@
 const { USER_STATES, setUserState, getUserState } = require('../bot/middlewares/session')
 const { buildShiftMenuKeyboard, buildBackKeyboard } = require('../utils/shift-menu.keyboard')
 const { formatDateHuman, toPgDate } = require('../utils/time')
+const { buildStatusesFromShift } = require('../utils/shift-status')
 
 const SHIFT_STEPS = {
   WAITING_DATE: 'WAITING_DATE',
@@ -19,6 +20,7 @@ function registerShiftMenuModule({
   shiftsRepo,
   messages,
   logger,
+  returnToMainPanel,
 }) {
   bot.onText(/\/shift(?:_menu)?/, async (msg) => {
     const chatId = msg.chat.id
@@ -54,12 +56,8 @@ function registerShiftMenuModule({
       return
     }
 
-    if (msg.text === messages.shiftMenu.backToMainButton) {
-      shiftSessions.delete(telegramId)
-      setUserState(telegramId, USER_STATES.MAIN_PANEL)
-      await bot.sendMessage(chatId, messages.shiftMenu.backToMainStub, {
-        reply_markup: { remove_keyboard: true },
-      })
+    if (msg.text === messages.navigation.back) {
+      await exitToMainPanel({ chatId, telegramId, returnToMainPanel, logger })
       return
     }
 
@@ -95,13 +93,6 @@ function registerShiftMenuModule({
         })
         break
       case SHIFT_STEPS.MENU_READY:
-        if (msg.text === messages.shiftMenu.backToMainButton) {
-          shiftSessions.delete(telegramId)
-          setUserState(telegramId, USER_STATES.MAIN_PANEL)
-          await bot.sendMessage(chatId, messages.shiftMenu.backToMainStub, {
-            reply_markup: { remove_keyboard: true },
-          })
-        }
         break
       default:
         break
@@ -166,9 +157,9 @@ async function startShiftMenuFlow({ bot, chatId, telegramId, brigadiersRepo, mes
 
     await bot.sendMessage(chatId, messages.shiftMenu.askDate, {
       reply_markup: {
-        keyboard: [[{ text: messages.shiftMenu.todayButton }]],
+        keyboard: buildKeyboardWithBack([[{ text: messages.shiftMenu.todayButton }]], messages.navigation.back),
         resize_keyboard: true,
-        one_time_keyboard: true,
+        one_time_keyboard: false,
       },
     })
   } catch (error) {
@@ -225,7 +216,10 @@ async function handleDateInput({ bot, chatId, telegramId, text, messages }) {
   shiftSessions.set(telegramId, session)
 
   await bot.sendMessage(chatId, messages.shiftMenu.askShip, {
-    reply_markup: { remove_keyboard: true },
+    reply_markup: {
+      keyboard: buildKeyboardWithBack([], messages.navigation.back),
+      resize_keyboard: true,
+    },
   })
 }
 
@@ -263,9 +257,9 @@ async function handleShipInput({
 
     await bot.sendMessage(chatId, messages.shiftMenu.askHolds, {
       reply_markup: {
-        keyboard: buildHoldsKeyboard(),
+        keyboard: buildKeyboardWithBack(buildHoldsKeyboard(), messages.navigation.back),
         resize_keyboard: true,
-        one_time_keyboard: true,
+        one_time_keyboard: false,
       },
     })
   } catch (error) {
@@ -310,9 +304,9 @@ async function handleHoldsInput({ bot, chatId, telegramId, text, shiftsRepo, mes
       await bot.sendMessage(chatId, messages.shiftMenu.duplicateShift)
       await bot.sendMessage(chatId, messages.shiftMenu.askDate, {
         reply_markup: {
-          keyboard: [[{ text: messages.shiftMenu.todayButton }]],
+          keyboard: buildKeyboardWithBack([[{ text: messages.shiftMenu.todayButton }]], messages.navigation.back),
           resize_keyboard: true,
-          one_time_keyboard: true,
+          one_time_keyboard: false,
         },
       })
 
@@ -333,7 +327,10 @@ async function handleHoldsInput({ bot, chatId, telegramId, text, shiftsRepo, mes
     setUserState(telegramId, USER_STATES.SHIFT_MENU)
 
     await bot.sendMessage(chatId, messages.shiftMenu.created, {
-      reply_markup: { remove_keyboard: true },
+      reply_markup: {
+        keyboard: buildBackKeyboard(messages.navigation.back),
+        resize_keyboard: true,
+      },
     })
 
     await renderShiftMenu({ bot, chatId, session, messages })
@@ -386,17 +383,6 @@ function parseShiftDate(text, todayButton) {
   return date
 }
 
-// Формируем набор флагов заполненности смены
-function buildStatusesFromShift(shift) {
-  return {
-    crewFilled: Boolean(shift.is_crew_filled),
-    wagesFilled: Boolean(shift.is_salary_filled),
-    materialsFilled: Boolean(shift.is_materials_filled),
-    expensesFilled: Boolean(shift.is_expenses_filled),
-    photosFilled: Boolean(shift.is_photos_filled),
-  }
-}
-
 // Отрисовка меню смены с inline-клавиатурой и кнопкой возврата
 async function renderShiftMenu({ bot, chatId, session, messages }) {
   const menuText = messages.shiftMenu.menu({
@@ -420,10 +406,30 @@ async function renderShiftMenu({ bot, chatId, session, messages }) {
 
   await bot.sendMessage(chatId, messages.shiftMenu.backKeyboardHint, {
     reply_markup: {
-      keyboard: buildBackKeyboard(messages.shiftMenu.backToMainButton),
+      keyboard: buildBackKeyboard(messages.navigation.back),
       resize_keyboard: true,
     },
   })
+}
+
+// Добавляем кнопку "Назад" к любым клавиатурам ввода
+function buildKeyboardWithBack(baseKeyboard, backText) {
+  const safeKeyboard = Array.isArray(baseKeyboard) && baseKeyboard.length ? baseKeyboard : []
+  return [...safeKeyboard, [{ text: backText }]]
+}
+
+// Возврат в главную панель без лишних сообщений
+async function exitToMainPanel({ chatId, telegramId, returnToMainPanel, logger }) {
+  shiftSessions.delete(telegramId)
+  setUserState(telegramId, USER_STATES.MAIN_PANEL)
+
+  if (returnToMainPanel) {
+    try {
+      await returnToMainPanel({ chatId, telegramId })
+    } catch (error) {
+      logger?.error('Не удалось вернуть пользователя на главную панель', { error: error.message })
+    }
+  }
 }
 
 module.exports = {
