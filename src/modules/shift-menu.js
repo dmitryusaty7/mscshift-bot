@@ -2,6 +2,7 @@ const { USER_STATES, setUserState, getUserState } = require('../bot/middlewares/
 const { buildShiftMenuKeyboard, buildBackKeyboard } = require('../utils/shift-menu.keyboard')
 const { formatDateHuman, toPgDate } = require('../utils/time')
 const { buildStatusesFromShift } = require('../utils/shift-status')
+const { backToMainMenu } = require('../utils/back-to-main-menu')
 
 const SHIFT_STEPS = {
   WAITING_DATE: 'WAITING_DATE',
@@ -57,7 +58,15 @@ function registerShiftMenuModule({
     }
 
     if (msg.text === messages.navigation.back) {
-      await exitToMainPanel({ chatId, telegramId, returnToMainPanel, logger })
+      await handleBackToMainMenuFromShift({
+        bot,
+        chatId,
+        telegramId,
+        session,
+        messages,
+        logger,
+        returnToMainPanel,
+      })
       return
     }
 
@@ -143,6 +152,12 @@ async function startShiftMenuFlow({ bot, chatId, telegramId, brigadiersRepo, mes
 
     const brigadierName = `${brigadier.last_name} ${brigadier.first_name}`.trim()
 
+    const previousSession = shiftSessions.get(telegramId)
+
+    if (previousSession) {
+      await clearShiftMenuMessages({ bot, chatId, session: previousSession, logger })
+    }
+
     shiftSessions.delete(telegramId)
 
     shiftSessions.set(telegramId, {
@@ -189,7 +204,7 @@ async function openShiftMenu({ bot, chatId, telegramId, brigadier, shift, messag
     shiftSessions.set(telegramId, session)
     setUserState(telegramId, USER_STATES.SHIFT_MENU)
 
-    await renderShiftMenu({ bot, chatId, session, messages })
+    await renderShiftMenu({ bot, chatId, session, messages, telegramId })
   } catch (error) {
     logger.error('Не удалось открыть меню существующей смены', { error: error.message })
     await bot.sendMessage(chatId, messages.systemError)
@@ -333,7 +348,7 @@ async function handleHoldsInput({ bot, chatId, telegramId, text, shiftsRepo, mes
       },
     })
 
-    await renderShiftMenu({ bot, chatId, session, messages })
+    await renderShiftMenu({ bot, chatId, session, messages, telegramId })
   } catch (error) {
     logger.error('Ошибка при создании смены', { error: error.message })
     await bot.sendMessage(chatId, messages.systemError)
@@ -384,7 +399,7 @@ function parseShiftDate(text, todayButton) {
 }
 
 // Отрисовка меню смены с inline-клавиатурой и кнопкой возврата
-async function renderShiftMenu({ bot, chatId, session, messages }) {
+async function renderShiftMenu({ bot, chatId, session, messages, telegramId }) {
   const menuText = messages.shiftMenu.menu({
     date: formatDateHuman(session.data.date),
     brigadierName: session.data.brigadierName,
@@ -397,19 +412,30 @@ async function renderShiftMenu({ bot, chatId, session, messages }) {
     statuses: session.data.statuses,
   })
 
-  await bot.sendMessage(chatId, menuText, {
+  const menuMessage = await bot.sendMessage(chatId, menuText, {
     reply_markup: {
       inline_keyboard: keyboard,
     },
     parse_mode: 'HTML',
   })
 
-  await bot.sendMessage(chatId, messages.shiftMenu.backKeyboardHint, {
+  const backKeyboardMessage = await bot.sendMessage(chatId, messages.shiftMenu.backKeyboardHint, {
     reply_markup: {
       keyboard: buildBackKeyboard(messages.navigation.back),
       resize_keyboard: true,
     },
   })
+
+  if (telegramId) {
+    shiftSessions.set(telegramId, {
+      ...session,
+      data: {
+        ...session.data,
+        menuMessageId: menuMessage.message_id,
+        backKeyboardMessageId: backKeyboardMessage.message_id,
+      },
+    })
+  }
 }
 
 // Добавляем кнопку "Назад" к любым клавиатурам ввода
@@ -418,18 +444,47 @@ function buildKeyboardWithBack(baseKeyboard, backText) {
   return [...safeKeyboard, [{ text: backText }]]
 }
 
-// Возврат в главную панель без лишних сообщений
-async function exitToMainPanel({ chatId, telegramId, returnToMainPanel, logger }) {
-  shiftSessions.delete(telegramId)
-  setUserState(telegramId, USER_STATES.MAIN_PANEL)
+// Русский комментарий: централизованно чистим следы меню смены
+async function clearShiftMenuMessages({ bot, chatId, session, logger }) {
+  const menuMessageId = session?.data?.menuMessageId
+  const backKeyboardMessageId = session?.data?.backKeyboardMessageId
 
-  if (returnToMainPanel) {
+  if (menuMessageId) {
     try {
-      await returnToMainPanel({ chatId, telegramId })
+      await bot.editMessageReplyMarkup(
+        { inline_keyboard: [] },
+        { chat_id: chatId, message_id: menuMessageId },
+      )
     } catch (error) {
-      logger?.error('Не удалось вернуть пользователя на главную панель', { error: error.message })
+      if (!String(error.message || '').includes('message is not modified')) {
+        logger?.warn('Не удалось очистить inline-клавиатуру меню смены', { error: error.message })
+      }
     }
   }
+
+  if (backKeyboardMessageId) {
+    try {
+      await bot.deleteMessage(chatId, backKeyboardMessageId)
+    } catch (error) {
+      logger?.warn('Не удалось удалить сообщение с кнопкой "Назад"', { error: error.message })
+    }
+  }
+}
+
+// Русский комментарий: единая точка выхода из сценариев смены
+async function handleBackToMainMenuFromShift({ bot, chatId, telegramId, session, messages, logger, returnToMainPanel }) {
+  await backToMainMenu({
+    bot,
+    chatId,
+    telegramId,
+    messages,
+    logger,
+    cleanups: [
+      () => clearShiftMenuMessages({ bot, chatId, session, logger }),
+      () => shiftSessions.delete(telegramId),
+    ],
+    openMainMenu: () => returnToMainPanel?.({ chatId, telegramId }),
+  })
 }
 
 module.exports = {
