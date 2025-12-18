@@ -293,7 +293,7 @@ async function handleNewShiftRequest({
 
 // Формируем основную клавиатуру панели
 function buildMainKeyboard(messages) {
-  return [[{ text: messages.mainPanel.newShiftButton }], [{ text: messages.mainPanel.activeShiftsButton }], [{ text: messages.navigation.back }]]
+  return [[{ text: messages.mainPanel.newShiftButton }], [{ text: messages.mainPanel.activeShiftsButton }]]
 }
 
 // Формируем текст кнопки активной смены
@@ -337,6 +337,12 @@ async function clearActiveShiftsKeyboardSession({ telegramId, bot, logger }) {
 
 // Отправляем или переотправляем главное сообщение без дублирования
 async function sendMainPanelMessage({ bot, chatId, telegramId, panelText, messages, logger }) {
+  const previous = mainPanelMessages.get(telegramId)
+
+  if (previous && previous.chatId === chatId && previous.text === panelText) {
+    return
+  }
+
   await deletePreviousMainPanelMessage({ bot, telegramId, logger })
 
   const sent = await bot.sendMessage(chatId, panelText, {
