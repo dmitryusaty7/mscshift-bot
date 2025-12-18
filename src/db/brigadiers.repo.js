@@ -1,4 +1,6 @@
 // Репозиторий для работы с таблицей brigadiers
+const { randomUUID } = require('crypto')
+
 function createBrigadiersRepo(pool) {
   return {
     findByTelegramId,

@@ -21,7 +21,7 @@ src/
   bot/
     index.js              // запуск и регистрация обработчиков
     handlers/
-      start.handler.js    // логика /start (Блок 0)
+      start.handler.js    // логика /start (Блоки 0-1)
     middlewares/
       session.js          // временное хранение состояния пользователя
   db/
