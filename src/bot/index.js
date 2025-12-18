@@ -3,7 +3,7 @@ const { registerStartHandler } = require('./handlers/start.handler')
 const { registerPhotoHandler } = require('./handlers/photo.handler')
 const { registerRegistrationModule } = require('../modules/register')
 const { registerShiftMenuModule, startShiftMenuFlow, openShiftMenu } = require('../modules/shift-menu')
-const { registerMainPanelModule, showMainPanel } = require('../modules/main-panel')
+const { registerMainPanelModule, showMainPanel, openMainPanel } = require('../modules/main-panel')
 
 // Создаём экземпляр бота и регистрируем обработчики
 function createBot({ token, logger, repositories, messages, directusClient }) {
@@ -55,6 +55,16 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
     shiftsRepo: repositories.shifts,
     logger,
     messages,
+    returnToMainPanel: ({ chatId, telegramId }) =>
+      openMainPanel({
+        bot,
+        chatId,
+        telegramId,
+        brigadiersRepo: repositories.brigadiers,
+        shiftsRepo: repositories.shifts,
+        messages,
+        logger,
+      }),
   })
 
   registerMainPanelModule({

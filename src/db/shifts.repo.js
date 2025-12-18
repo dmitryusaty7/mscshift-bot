@@ -100,6 +100,7 @@ function createShiftsRepo(pool) {
       SELECT s.id,
              s.date,
              s.holds_count,
+             s.is_closed,
              sh.name AS ship_name,
              s.is_crew_filled,
              s.is_salary_filled,
