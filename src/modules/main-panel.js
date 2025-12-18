@@ -3,6 +3,7 @@ const { formatDateHuman } = require('../utils/time')
 const { buildStatusesFromShift, isShiftComplete, statusIcon } = require('../utils/shift-status')
 
 const activeShiftKeyboardSessions = new Map()
+const mainPanelMessages = new Map()
 
 // TODO: Добавить аналитику по кликам в панели бригадира
 // TODO: Проверка на повторное открытие смены
@@ -144,7 +145,7 @@ async function openMainPanel({ bot, chatId, telegramId, brigadiersRepo, shiftsRe
     }
 
     await clearActiveShiftsKeyboardSession({ telegramId, bot, logger })
-    await showMainPanel({ bot, chatId, brigadier, shiftsRepo, messages, telegramId })
+    await showMainPanel({ bot, chatId, brigadier, shiftsRepo, messages, telegramId, logger })
 
     setUserState(telegramId, USER_STATES.MAIN_PANEL)
   } catch (error) {
@@ -154,7 +155,7 @@ async function openMainPanel({ bot, chatId, telegramId, brigadiersRepo, shiftsRe
 }
 
 // Отображение приветствия и клавиатуры главной панели
-async function showMainPanel({ bot, chatId, brigadier, shiftsRepo, messages, telegramId }) {
+async function showMainPanel({ bot, chatId, brigadier, shiftsRepo, messages, telegramId, logger }) {
   const fullName = `${brigadier.last_name} ${brigadier.first_name}`.trim()
   const today = formatDateHuman(new Date())
   const activeShifts = await shiftsRepo.getActiveByBrigadier(brigadier.id)
@@ -166,11 +167,13 @@ async function showMainPanel({ bot, chatId, brigadier, shiftsRepo, messages, tel
     activeList,
   })
 
-  await bot.sendMessage(chatId, panelText, {
-    reply_markup: {
-      keyboard: buildMainKeyboard(messages),
-      resize_keyboard: true,
-    },
+  await sendMainPanelMessage({
+    bot,
+    chatId,
+    telegramId,
+    panelText,
+    messages,
+    logger,
   })
 }
 
@@ -186,36 +189,59 @@ async function handleActiveShiftsRequest({ bot, chatId, telegramId, brigadiersRe
 
     await clearActiveShiftsKeyboardSession({ telegramId, bot, logger })
 
-    const activeShifts = await shiftsRepo.getActiveByBrigadier(brigadier.id)
+    const activeShiftsRaw = await shiftsRepo.getActiveByBrigadier(brigadier.id)
+    const activeShifts = activeShiftsRaw.filter((shift) => {
+      const isActive = shift?.is_closed === false || typeof shift?.is_closed === 'undefined'
+
+      if (!isActive) {
+        logger?.warn('Пропущена закрытая смена при построении списка', {
+          telegramId,
+          shiftId: shift?.id,
+        })
+      }
+
+      return isActive
+    })
 
     if (!activeShifts.length) {
       await bot.sendMessage(chatId, messages.mainPanel.noActiveShifts)
       return
     }
 
-    const enrichedShifts = activeShifts.map((shift) => {
-      const textWithoutStatus = formatActiveShiftButton({ shift, withStatusIcon: false })
-      const statuses = buildStatusesFromShift(shift)
-      const statusMark = statusIcon(isShiftComplete(statuses))
+    const enrichedShifts = activeShifts
+      .map((shift) => {
+        try {
+          const textWithoutStatus = formatActiveShiftButton({ shift, withStatusIcon: false })
+          const statuses = buildStatusesFromShift(shift)
+          const statusMark = statusIcon(isShiftComplete(statuses))
 
-      return {
-        shift,
-        label: `${textWithoutStatus} ${statusMark}`,
-        textWithoutStatus,
-        statusMark,
-      }
-    })
-    const [latestShift, ...otherShifts] = enrichedShifts
-    const latestShiftLine = `${latestShift.textWithoutStatus} ${latestShift.statusMark}`
-    const inlineKeyboard = [latestShift, ...otherShifts].map((item) => [
+          return {
+            shift,
+            label: `${textWithoutStatus} ${statusMark}`,
+          }
+        } catch (error) {
+          logger?.warn('Не удалось отрендерить активную смену', {
+            telegramId,
+            shiftId: shift?.id,
+            error: error.message,
+          })
+          return null
+        }
+      })
+      .filter(Boolean)
+
+    if (!enrichedShifts.length) {
+      await bot.sendMessage(chatId, messages.mainPanel.noActiveShifts)
+      return
+    }
+
+    const inlineKeyboard = enrichedShifts.map((item) => [
       { text: item.label, callback_data: `activeShift:${item.shift.id}` },
     ])
 
     const sentMessage = await bot.sendMessage(
       chatId,
-      messages.mainPanel.activeShiftsList({
-        latestShiftLine,
-      }),
+      messages.mainPanel.activeShiftsList(),
       {
         reply_markup: {
           inline_keyboard: inlineKeyboard,
@@ -226,6 +252,7 @@ async function handleActiveShiftsRequest({ bot, chatId, telegramId, brigadiersRe
     activeShiftKeyboardSessions.set(telegramId, {
       chatId,
       messageId: sentMessage.message_id,
+      inlineKeyboard,
     })
   } catch (error) {
     logger.error('Ошибка при получении активных смен', { error: error.message })
@@ -285,15 +312,65 @@ async function clearActiveShiftsKeyboardSession({ telegramId, bot, logger }) {
     return
   }
 
+  const hasButtons =
+    Array.isArray(session.inlineKeyboard) &&
+    session.inlineKeyboard.some((row) => Array.isArray(row) && row.length > 0)
+
+  if (!hasButtons) {
+    activeShiftKeyboardSessions.delete(telegramId)
+    return
+  }
+
   try {
     await bot.editMessageReplyMarkup(
       { inline_keyboard: [] },
       { chat_id: session.chatId, message_id: session.messageId },
     )
   } catch (error) {
-    logger?.warn('Не удалось очистить клавиатуру активных смен', { error: error.message })
+    if (!String(error.message || '').includes('message is not modified')) {
+      logger?.warn('Не удалось очистить клавиатуру активных смен', { error: error.message })
+    }
   } finally {
     activeShiftKeyboardSessions.delete(telegramId)
+  }
+}
+
+// Отправляем или переотправляем главное сообщение без дублирования
+async function sendMainPanelMessage({ bot, chatId, telegramId, panelText, messages, logger }) {
+  await deletePreviousMainPanelMessage({ bot, telegramId, logger })
+
+  const sent = await bot.sendMessage(chatId, panelText, {
+    reply_markup: {
+      keyboard: buildMainKeyboard(messages),
+      resize_keyboard: true,
+    },
+  })
+
+  mainPanelMessages.set(telegramId, {
+    chatId,
+    messageId: sent.message_id,
+    text: panelText,
+  })
+}
+
+// Удаляем предыдущее приветственное сообщение, если оно ещё существует
+async function deletePreviousMainPanelMessage({ bot, telegramId, logger }) {
+  const previous = mainPanelMessages.get(telegramId)
+
+  if (!previous) {
+    return
+  }
+
+  try {
+    await bot.deleteMessage(previous.chatId, previous.messageId)
+  } catch (error) {
+    logger?.warn('Не удалось удалить предыдущее сообщение главной панели', {
+      error: error.message,
+      telegramId,
+      messageId: previous.messageId,
+    })
+  } finally {
+    mainPanelMessages.delete(telegramId)
   }
 }
 
