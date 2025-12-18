@@ -21,12 +21,12 @@ function createShipsRepo(pool) {
   // Создаём запись судна, если его ещё нет
   async function create({ name }) {
     const query = `
-      INSERT INTO ships (name)
-      VALUES ($1)
+      INSERT INTO ships (name, status)
+      VALUES ($1, $2)
       RETURNING *
     `
 
-    const { rows } = await pool.query(query, [name])
+    const { rows } = await pool.query(query, [name, 'Active'])
     return rows[0]
   }
 }
