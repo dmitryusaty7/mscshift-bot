@@ -4,10 +4,22 @@ const { registerPhotoHandler } = require('./handlers/photo.handler')
 const { registerRegistrationModule } = require('../modules/register')
 const { registerShiftMenuModule, startShiftMenuFlow, openShiftMenu } = require('../modules/shift-menu')
 const { registerMainPanelModule, showMainPanel, openMainPanel } = require('../modules/main-panel')
+const { registerCrewModule } = require('../modules/crew')
 
 // Создаём экземпляр бота и регистрируем обработчики
 function createBot({ token, logger, repositories, messages, directusClient }) {
   const bot = new TelegramBot(token, { polling: true })
+
+  const crewModule = registerCrewModule({
+    bot,
+    logger,
+    messages,
+    crewRepo: repositories.crew,
+    shiftsRepo: repositories.shifts,
+    brigadiersRepo: repositories.brigadiers,
+    openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
+      openShiftMenu({ bot, chatId, telegramId, brigadier, shift, messages, logger }),
+  })
 
   registerStartHandler({
     bot,
@@ -68,6 +80,8 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
         logger,
         forceSend: true,
       }),
+    openCrewScene: ({ chatId, telegramId, session }) =>
+      crewModule.openCrewFromShiftMenu({ chatId, telegramId, session }),
   })
 
   registerMainPanelModule({

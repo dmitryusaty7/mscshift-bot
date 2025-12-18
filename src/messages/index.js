@@ -1,4 +1,6 @@
 // Все тексты бота в одном месте
+const crew = require('./crew')
+
 const messages = {
   welcomeExistingUser: (name) =>
     `Добро пожаловать${name ? `, ${name}` : ''}! Рады видеть вас снова.`,
@@ -68,6 +70,7 @@ const messages = {
     uploadSuccess: 'Фото успешно сохранено в системе. Спасибо за отчёт!',
     uploadFailed: 'Не удалось сохранить фото. Попробуйте ещё раз или обратитесь в поддержку.',
   },
+  crew,
 }
 
 module.exports = messages
