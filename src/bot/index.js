@@ -2,7 +2,7 @@ const TelegramBot = require('node-telegram-bot-api')
 const { registerStartHandler } = require('./handlers/start.handler')
 const { registerPhotoHandler } = require('./handlers/photo.handler')
 const { registerRegistrationModule } = require('../modules/register')
-const { registerShiftMenuModule, startShiftMenuFlow } = require('../modules/shift-menu')
+const { registerShiftMenuModule, startShiftMenuFlow, openShiftMenu } = require('../modules/shift-menu')
 const { registerMainPanelModule, showMainPanel } = require('../modules/main-panel')
 
 // Создаём экземпляр бота и регистрируем обработчики
@@ -14,8 +14,15 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
     brigadiersRepo: repositories.brigadiers,
     logger,
     messages,
-    showMainPanel: ({ bot: botInstance, chatId, brigadier }) =>
-      showMainPanel({ bot: botInstance, chatId, brigadier, shiftsRepo: repositories.shifts, messages }),
+    showMainPanel: ({ bot: botInstance, chatId, brigadier, telegramId }) =>
+      showMainPanel({
+        bot: botInstance,
+        chatId,
+        brigadier,
+        telegramId,
+        shiftsRepo: repositories.shifts,
+        messages,
+      }),
   })
 
   registerRegistrationModule({
@@ -23,8 +30,15 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
     brigadiersRepo: repositories.brigadiers,
     logger,
     messages,
-    showMainPanel: ({ bot: botInstance, chatId, brigadier }) =>
-      showMainPanel({ bot: botInstance, chatId, brigadier, shiftsRepo: repositories.shifts, messages }),
+    showMainPanel: ({ bot: botInstance, chatId, brigadier, telegramId }) =>
+      showMainPanel({
+        bot: botInstance,
+        chatId,
+        brigadier,
+        telegramId,
+        shiftsRepo: repositories.shifts,
+        messages,
+      }),
   })
 
   registerPhotoHandler({
@@ -55,6 +69,16 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
         chatId,
         telegramId,
         brigadiersRepo: repositories.brigadiers,
+        messages,
+        logger,
+      }),
+    openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
+      openShiftMenu({
+        bot,
+        chatId,
+        telegramId,
+        brigadier,
+        shift,
         messages,
         logger,
       }),

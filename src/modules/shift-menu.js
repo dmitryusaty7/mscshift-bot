@@ -177,6 +177,34 @@ async function startShiftMenuFlow({ bot, chatId, telegramId, brigadiersRepo, mes
   }
 }
 
+// Открываем меню существующей смены из главной панели
+async function openShiftMenu({ bot, chatId, telegramId, brigadier, shift, messages, logger }) {
+  try {
+    const brigadierName = `${brigadier.last_name} ${brigadier.first_name}`.trim()
+    const statuses = buildStatusesFromShift(shift)
+    const session = {
+      step: SHIFT_STEPS.MENU_READY,
+      data: {
+        brigadierId: brigadier.id,
+        brigadierName,
+        shiftId: shift.id,
+        shipName: shift.ship_name,
+        holdsCount: shift.holds_count,
+        date: new Date(shift.date),
+        statuses,
+      },
+    }
+
+    shiftSessions.set(telegramId, session)
+    setUserState(telegramId, USER_STATES.SHIFT_MENU)
+
+    await renderShiftMenu({ bot, chatId, session, messages })
+  } catch (error) {
+    logger.error('Не удалось открыть меню существующей смены', { error: error.message })
+    await bot.sendMessage(chatId, messages.systemError)
+  }
+}
+
 // Этап ввода даты смены
 async function handleDateInput({ bot, chatId, telegramId, text, messages }) {
   const session = shiftSessions.get(telegramId)
@@ -300,13 +328,7 @@ async function handleHoldsInput({ bot, chatId, telegramId, text, shiftsRepo, mes
 
     session.step = SHIFT_STEPS.MENU_READY
     session.data.shiftId = shift.id
-    session.data.statuses = {
-      crewFilled: Boolean(shift.is_crew_filled),
-      wagesFilled: Boolean(shift.is_salary_filled),
-      materialsFilled: Boolean(shift.is_materials_filled),
-      expensesFilled: Boolean(shift.is_expenses_filled),
-      photosFilled: Boolean(shift.is_photos_filled),
-    }
+    session.data.statuses = buildStatusesFromShift(shift)
     shiftSessions.set(telegramId, session)
     setUserState(telegramId, USER_STATES.SHIFT_MENU)
 
@@ -314,31 +336,7 @@ async function handleHoldsInput({ bot, chatId, telegramId, text, shiftsRepo, mes
       reply_markup: { remove_keyboard: true },
     })
 
-    const menuText = messages.shiftMenu.menu({
-      date: formatDateHuman(date),
-      brigadierName: session.data.brigadierName,
-      shipName: session.data.shipName,
-      holdsCount,
-      statuses: session.data.statuses,
-    })
-
-    const keyboard = buildShiftMenuKeyboard({
-      statuses: session.data.statuses,
-    })
-
-    await bot.sendMessage(chatId, menuText, {
-      reply_markup: {
-        inline_keyboard: keyboard,
-      },
-      parse_mode: 'HTML',
-    })
-
-    await bot.sendMessage(chatId, messages.shiftMenu.backKeyboardHint, {
-      reply_markup: {
-        keyboard: buildBackKeyboard(messages.shiftMenu.backToMainButton),
-        resize_keyboard: true,
-      },
-    })
+    await renderShiftMenu({ bot, chatId, session, messages })
   } catch (error) {
     logger.error('Ошибка при создании смены', { error: error.message })
     await bot.sendMessage(chatId, messages.systemError)
@@ -388,7 +386,48 @@ function parseShiftDate(text, todayButton) {
   return date
 }
 
+// Формируем набор флагов заполненности смены
+function buildStatusesFromShift(shift) {
+  return {
+    crewFilled: Boolean(shift.is_crew_filled),
+    wagesFilled: Boolean(shift.is_salary_filled),
+    materialsFilled: Boolean(shift.is_materials_filled),
+    expensesFilled: Boolean(shift.is_expenses_filled),
+    photosFilled: Boolean(shift.is_photos_filled),
+  }
+}
+
+// Отрисовка меню смены с inline-клавиатурой и кнопкой возврата
+async function renderShiftMenu({ bot, chatId, session, messages }) {
+  const menuText = messages.shiftMenu.menu({
+    date: formatDateHuman(session.data.date),
+    brigadierName: session.data.brigadierName,
+    shipName: session.data.shipName,
+    holdsCount: session.data.holdsCount,
+    statuses: session.data.statuses,
+  })
+
+  const keyboard = buildShiftMenuKeyboard({
+    statuses: session.data.statuses,
+  })
+
+  await bot.sendMessage(chatId, menuText, {
+    reply_markup: {
+      inline_keyboard: keyboard,
+    },
+    parse_mode: 'HTML',
+  })
+
+  await bot.sendMessage(chatId, messages.shiftMenu.backKeyboardHint, {
+    reply_markup: {
+      keyboard: buildBackKeyboard(messages.shiftMenu.backToMainButton),
+      resize_keyboard: true,
+    },
+  })
+}
+
 module.exports = {
   registerShiftMenuModule,
   startShiftMenuFlow,
+  openShiftMenu,
 }
