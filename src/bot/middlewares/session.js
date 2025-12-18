@@ -8,6 +8,7 @@ const USER_STATES = {
 }
 
 const sessions = new Map()
+// TODO: при добавлении таблицы user_states синхронизировать состояние в БД
 
 // Устанавливаем состояние пользователя
 function setUserState(telegramId, state) {

@@ -22,18 +22,15 @@ function createBrigadiersRepo(pool) {
 
   // Создаём запись бригадира
   async function create({ telegramId, firstName, lastName }) {
-    const id = randomUUID()
-    const createdAt = new Date()
-    const updatedAt = createdAt
     const status = 'active'
 
     const query = `
-      INSERT INTO brigadiers (id, telegram_id, first_name, last_name, status, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO brigadiers (telegram_id, first_name, last_name, status)
+      VALUES ($1, $2, $3, $4)
       RETURNING *
     `
 
-    const { rows } = await pool.query(query, [id, telegramId, firstName, lastName, status, createdAt, updatedAt])
+    const { rows } = await pool.query(query, [telegramId, firstName, lastName, status])
     return rows[0]
   }
 }

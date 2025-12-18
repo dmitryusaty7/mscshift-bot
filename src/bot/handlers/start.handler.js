@@ -19,8 +19,9 @@ function registerStartHandler({ bot, brigadiersRepo, logger, messages, showMainP
       const brigadier = await brigadiersRepo.findByTelegramId(String(telegramId))
 
       if (brigadier) {
+        const helloName = brigadier.first_name || firstName
         setUserState(telegramId, USER_STATES.MAIN_PANEL)
-        await bot.sendMessage(chatId, messages.welcomeExistingUser(firstName))
+        await bot.sendMessage(chatId, messages.welcomeExistingUser(helloName))
         if (showMainPanel) {
           await showMainPanel({ bot, chatId, brigadier })
         } else {

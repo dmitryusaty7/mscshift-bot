@@ -43,6 +43,7 @@ function registerShiftMenuModule({
   bot.on('message', async (msg) => {
     const telegramId = msg.from?.id
     const chatId = msg.chat.id
+
     if (!telegramId || !/^\d+$/.test(String(telegramId))) {
       return
     }
@@ -218,7 +219,7 @@ async function handleShipInput({
 
   const shipName = text?.trim()
 
-  if (!shipName || !/^[A-Za-zА-Яа-яЁё0-9\-\s]{2,}$/u.test(shipName)) {
+  if (!shipName || !/^[A-Za-zА-Яа-яЁё0-9\- ]{2,}$/u.test(shipName)) {
     await bot.sendMessage(chatId, messages.shiftMenu.invalidShip)
     return
   }
@@ -300,11 +301,11 @@ async function handleHoldsInput({ bot, chatId, telegramId, text, shiftsRepo, mes
     session.step = SHIFT_STEPS.MENU_READY
     session.data.shiftId = shift.id
     session.data.statuses = {
-      crewFilled: shift.crew_filled,
-      wagesFilled: shift.wages_filled,
-      materialsFilled: shift.materials_filled,
-      expensesFilled: shift.expenses_filled,
-      photosFilled: shift.photos_filled,
+      crewFilled: Boolean(shift.is_crew_filled),
+      wagesFilled: Boolean(shift.is_salary_filled),
+      materialsFilled: Boolean(shift.is_materials_filled),
+      expensesFilled: Boolean(shift.is_expenses_filled),
+      photosFilled: Boolean(shift.is_photos_filled),
     }
     shiftSessions.set(telegramId, session)
     setUserState(telegramId, USER_STATES.SHIFT_MENU)
@@ -313,8 +314,8 @@ async function handleHoldsInput({ bot, chatId, telegramId, text, shiftsRepo, mes
       reply_markup: { remove_keyboard: true },
     })
 
-    const menuText = buildShiftMenuMessage({
-      date,
+    const menuText = messages.shiftMenu.menu({
+      date: formatDateHuman(date),
       brigadierName: session.data.brigadierName,
       shipName: session.data.shipName,
       holdsCount,
@@ -385,25 +386,6 @@ function parseShiftDate(text, todayButton) {
   }
 
   return date
-}
-
-function buildShiftMenuMessage({ date, brigadierName, shipName, holdsCount, statuses }) {
-  const icon = (filled) => (filled ? '✅' : '✍')
-
-  return [
-    '<b>Меню смены</b>',
-    `Дата: <b>${formatDateHuman(date)}</b>`,
-    `Бригадир: <b>${brigadierName}</b>`,
-    `Судно: <b>${shipName}</b>`,
-    `Количество трюмов: <b>${holdsCount}</b>`,
-    '',
-    'Разделы:',
-    `👷 Состав бригады — ${icon(statuses.crewFilled)}`,
-    `💰 Заработная плата — ${icon(statuses.wagesFilled)}`,
-    `📦 Материалы — ${icon(statuses.materialsFilled)}`,
-    `🧾 Расходы — ${icon(statuses.expensesFilled)}`,
-    `🖼 Фото трюмов — ${icon(statuses.photosFilled)}`,
-  ].join('\n')
 }
 
 module.exports = {

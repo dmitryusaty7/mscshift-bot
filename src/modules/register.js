@@ -146,7 +146,7 @@ function isValidName(value) {
     return false
   }
 
-  return /^[А-ЯЁ][А-ЯЁа-яё\-\s]{1,49}$/u.test(normalized)
+  return /^[А-ЯЁ][а-яё\- ]{1,49}$/u.test(normalized)
 }
 
 // Нормализация ФИО с заглавными буквами для составных частей

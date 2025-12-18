@@ -1,6 +1,4 @@
 // Репозиторий для работы с таблицей ships
-const { randomUUID } = require('crypto')
-
 function createShipsRepo(pool) {
   return {
     findByName,
@@ -22,17 +20,13 @@ function createShipsRepo(pool) {
 
   // Создаём запись судна, если его ещё нет
   async function create({ name }) {
-    const id = randomUUID()
-    const createdAt = new Date()
-    const updatedAt = createdAt
-
     const query = `
-      INSERT INTO ships (id, name, created_at, updated_at)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO ships (name)
+      VALUES ($1)
       RETURNING *
     `
 
-    const { rows } = await pool.query(query, [id, name, createdAt, updatedAt])
+    const { rows } = await pool.query(query, [name])
     return rows[0]
   }
 }

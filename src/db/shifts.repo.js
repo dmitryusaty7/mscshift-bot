@@ -1,6 +1,4 @@
 // Репозиторий для работы с таблицей shifts
-const { randomUUID } = require('crypto')
-
 function createShiftsRepo(pool) {
   return {
     findDuplicate,
@@ -26,10 +24,6 @@ function createShiftsRepo(pool) {
 
   // Создаём новую смену и связанные трюмы в транзакции
   async function createShiftWithHolds({ date, brigadierId, shipId, holdsCount }) {
-    const id = randomUUID()
-    const createdAt = new Date()
-    const updatedAt = createdAt
-
     const client = await pool.connect()
 
     try {
@@ -37,48 +31,43 @@ function createShiftsRepo(pool) {
 
       const shiftQuery = `
         INSERT INTO shifts (
-          id,
           date,
           brigadier_id,
           ship_id,
           holds_count,
-          crew_filled,
-          wages_filled,
-          materials_filled,
-          expenses_filled,
-          photos_filled,
+          is_crew_filled,
+          is_salary_filled,
+          is_materials_filled,
+          is_expenses_filled,
+          is_photos_filled,
           is_closed,
+          group_message_id,
+          photo_report_url,
           created_at,
           updated_at
         )
         VALUES (
-          $1, $2, $3, $4, $5,
+          $1, $2, $3, $4,
           false, false, false, false, false,
           false,
-          $6, $7
+          NULL,
+          NULL,
+          DEFAULT,
+          DEFAULT
         )
         RETURNING *
       `
 
-      const { rows } = await client.query(shiftQuery, [
-        id,
-        date,
-        brigadierId,
-        shipId,
-        holdsCount,
-        createdAt,
-        updatedAt,
-      ])
+      const { rows } = await client.query(shiftQuery, [date, brigadierId, shipId, holdsCount])
 
       const holdQuery = `
-        INSERT INTO holds (id, shift_id, number, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO holds (shift_id, number)
+        VALUES ($1, $2)
       `
 
       for (let number = 1; number <= holdsCount; number += 1) {
-        const holdId = randomUUID()
         // eslint-disable-next-line no-await-in-loop
-        await client.query(holdQuery, [holdId, id, number, createdAt, updatedAt])
+        await client.query(holdQuery, [rows[0].id, number])
       }
 
       await client.query('COMMIT')
@@ -107,7 +96,15 @@ function createShiftsRepo(pool) {
   // Получаем активные смены с названиями судов
   async function getActiveByBrigadier(brigadierId) {
     const query = `
-      SELECT s.id, s.date, s.holds_count, sh.name AS ship_name, s.crew_filled, s.wages_filled, s.materials_filled, s.expenses_filled, s.photos_filled
+      SELECT s.id,
+             s.date,
+             s.holds_count,
+             sh.name AS ship_name,
+             s.is_crew_filled,
+             s.is_salary_filled,
+             s.is_materials_filled,
+             s.is_expenses_filled,
+             s.is_photos_filled
       FROM shifts s
       JOIN ships sh ON sh.id = s.ship_id
       WHERE s.brigadier_id = $1 AND s.is_closed = false
