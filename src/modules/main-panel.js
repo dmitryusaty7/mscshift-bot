@@ -293,11 +293,7 @@ async function handleNewShiftRequest({
 
 // Формируем основную клавиатуру панели
 function buildMainKeyboard(messages) {
-  return [
-    [{ text: messages.mainPanel.newShiftButton }],
-    [{ text: messages.mainPanel.activeShiftsButton }],
-    [{ text: messages.navigation.back }],
-  ]
+  return [[{ text: messages.mainPanel.newShiftButton }], [{ text: messages.mainPanel.activeShiftsButton }]]
 }
 
 // Формируем текст кнопки активной смены
