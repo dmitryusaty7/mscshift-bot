@@ -33,7 +33,16 @@ function registerMainPanelModule({
       return
     }
 
-    await openMainPanel({ bot, chatId, telegramId, brigadiersRepo, shiftsRepo, messages, logger })
+    await openMainPanel({
+      bot,
+      chatId,
+      telegramId,
+      brigadiersRepo,
+      shiftsRepo,
+      messages,
+      logger,
+      forceSend: true,
+    })
   })
 
   // Отработка кнопок главной панели
@@ -58,13 +67,19 @@ function registerMainPanelModule({
           bot,
           chatId,
           telegramId,
-          messages,
           logger,
-          cleanups: [
-            () => clearActiveShiftsKeyboardSession({ telegramId, bot, logger }),
-          ],
+          cleanups: [() => clearActiveShiftsKeyboardSession({ telegramId, bot, logger })],
           openMainMenu: () =>
-            openMainPanel({ bot, chatId, telegramId, brigadiersRepo, shiftsRepo, messages, logger }),
+            openMainPanel({
+              bot,
+              chatId,
+              telegramId,
+              brigadiersRepo,
+              shiftsRepo,
+              messages,
+              logger,
+              forceSend: true,
+            }),
         })
       }
 
@@ -76,7 +91,16 @@ function registerMainPanelModule({
     }
 
     if (msg.text === messages.navigation.back) {
-      await openMainPanel({ bot, chatId, telegramId, brigadiersRepo, shiftsRepo, messages, logger })
+      await openMainPanel({
+        bot,
+        chatId,
+        telegramId,
+        brigadiersRepo,
+        shiftsRepo,
+        messages,
+        logger,
+        forceSend: true,
+      })
       return
     }
 
@@ -141,7 +165,16 @@ function registerMainPanelModule({
       if (!shift) {
         await bot.answerCallbackQuery(query.id)
         await bot.sendMessage(chatId, messages.mainPanel.noActiveShifts)
-        await openMainPanel({ bot, chatId, telegramId, brigadiersRepo, shiftsRepo, messages, logger })
+        await openMainPanel({
+          bot,
+          chatId,
+          telegramId,
+          brigadiersRepo,
+          shiftsRepo,
+          messages,
+          logger,
+          forceSend: true,
+        })
         return
       }
 
@@ -158,7 +191,16 @@ function registerMainPanelModule({
 }
 
 // Отображение основной панели и сброс вспомогательных клавиатур
-async function openMainPanel({ bot, chatId, telegramId, brigadiersRepo, shiftsRepo, messages, logger }) {
+async function openMainPanel({
+  bot,
+  chatId,
+  telegramId,
+  brigadiersRepo,
+  shiftsRepo,
+  messages,
+  logger,
+  forceSend = false,
+}) {
   try {
     const brigadier = await brigadiersRepo.findByTelegramId(String(telegramId))
 
@@ -168,7 +210,7 @@ async function openMainPanel({ bot, chatId, telegramId, brigadiersRepo, shiftsRe
     }
 
     await clearActiveShiftsKeyboardSession({ telegramId, bot, logger })
-    await showMainPanel({ bot, chatId, brigadier, shiftsRepo, messages, telegramId, logger })
+    await showMainPanel({ bot, chatId, brigadier, shiftsRepo, messages, telegramId, logger, forceSend })
 
     setUserState(telegramId, USER_STATES.MAIN_PANEL)
   } catch (error) {
@@ -178,7 +220,16 @@ async function openMainPanel({ bot, chatId, telegramId, brigadiersRepo, shiftsRe
 }
 
 // Отображение приветствия и клавиатуры главной панели
-async function showMainPanel({ bot, chatId, brigadier, shiftsRepo, messages, telegramId, logger }) {
+async function showMainPanel({
+  bot,
+  chatId,
+  brigadier,
+  shiftsRepo,
+  messages,
+  telegramId,
+  logger,
+  forceSend = false,
+}) {
   const fullName = `${brigadier.last_name} ${brigadier.first_name}`.trim()
   const today = formatDateHuman(new Date())
   const activeShifts = await shiftsRepo.getActiveByBrigadier(brigadier.id)
@@ -197,6 +248,7 @@ async function showMainPanel({ bot, chatId, brigadier, shiftsRepo, messages, tel
     panelText,
     messages,
     logger,
+    forceSend,
   })
 }
 
@@ -346,38 +398,35 @@ async function clearActiveShiftsKeyboardSession({ telegramId, bot, logger }) {
     Array.isArray(session.inlineKeyboard) &&
     session.inlineKeyboard.some((row) => Array.isArray(row) && row.length > 0)
 
-  if (!hasButtons) {
-    activeShiftKeyboardSessions.delete(telegramId)
-    return
-  }
-
-  try {
-    await bot.editMessageReplyMarkup(
-      { inline_keyboard: [] },
-      { chat_id: session.chatId, message_id: session.messageId },
-    )
-  } catch (error) {
-    if (!String(error.message || '').includes('message is not modified')) {
-      logger?.warn('Не удалось очистить клавиатуру активных смен', { error: error.message })
-    }
-  } finally {
-    if (session.backMessageId) {
-      try {
-        await bot.deleteMessage(session.chatId, session.backMessageId)
-      } catch (error) {
-        logger?.warn('Не удалось удалить сообщение с кнопкой возврата', { error: error.message })
+  if (hasButtons) {
+    try {
+      await bot.editMessageReplyMarkup(
+        { inline_keyboard: [] },
+        { chat_id: session.chatId, message_id: session.messageId },
+      )
+    } catch (error) {
+      if (!String(error.message || '').includes('message is not modified')) {
+        logger?.warn('Не удалось очистить клавиатуру активных смен', { error: error.message })
       }
     }
-
-    activeShiftKeyboardSessions.delete(telegramId)
   }
+
+  if (session.backMessageId) {
+    try {
+      await bot.deleteMessage(session.chatId, session.backMessageId)
+    } catch (error) {
+      logger?.warn('Не удалось удалить сообщение с кнопкой возврата', { error: error.message })
+    }
+  }
+
+  activeShiftKeyboardSessions.delete(telegramId)
 }
 
 // Отправляем или переотправляем главное сообщение без дублирования
-async function sendMainPanelMessage({ bot, chatId, telegramId, panelText, messages, logger }) {
+async function sendMainPanelMessage({ bot, chatId, telegramId, panelText, messages, logger, forceSend = false }) {
   const previous = mainPanelMessages.get(telegramId)
 
-  if (previous && previous.chatId === chatId && previous.text === panelText) {
+  if (!forceSend && previous && previous.chatId === chatId && previous.text === panelText) {
     return
   }
 

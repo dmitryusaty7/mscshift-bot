@@ -1,4 +1,3 @@
-const { Markup } = require('telegraf')
 const { USER_STATES, setUserState } = require('../bot/middlewares/session')
 
 // TODO: Code Review for mergeability — убедиться, что единая логика подходит для всех блоков
@@ -8,11 +7,9 @@ async function backToMainMenu(ctx) {
     bot,
     chatId,
     telegramId,
-    messages,
     logger,
     openMainMenu,
     cleanups = [],
-    notifyUser = true,
   } = ctx || {}
 
   // Русский комментарий: проверяем минимальный набор данных для безопасного возврата
@@ -35,17 +32,6 @@ async function backToMainMenu(ctx) {
 
   // Русский комментарий: фиксируем состояние, чтобы остальные хендлеры не перехватывали сообщения
   setUserState(telegramId, USER_STATES.MAIN_PANEL)
-
-  // Русский комментарий: убираем устаревшие reply-клавиатуры перед показом главного меню
-  if (notifyUser) {
-    try {
-      await bot.sendMessage(chatId, messages.mainPanel.returnedToMain, {
-        reply_markup: Markup.removeKeyboard().reply_markup,
-      })
-    } catch (error) {
-      logger?.warn('Не удалось отправить уведомление о возврате', { error: error.message })
-    }
-  }
 
   // Русский комментарий: показываем главное меню через переданный колбэк
   try {

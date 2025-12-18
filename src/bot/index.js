@@ -14,7 +14,7 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
     brigadiersRepo: repositories.brigadiers,
     logger,
     messages,
-    showMainPanel: ({ bot: botInstance, chatId, brigadier, telegramId }) =>
+    showMainPanel: ({ bot: botInstance, chatId, brigadier, telegramId, forceSend = false }) =>
       showMainPanel({
         bot: botInstance,
         chatId,
@@ -22,6 +22,7 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
         telegramId,
         shiftsRepo: repositories.shifts,
         messages,
+        forceSend,
       }),
   })
 
@@ -30,7 +31,7 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
     brigadiersRepo: repositories.brigadiers,
     logger,
     messages,
-    showMainPanel: ({ bot: botInstance, chatId, brigadier, telegramId }) =>
+    showMainPanel: ({ bot: botInstance, chatId, brigadier, telegramId, forceSend = false }) =>
       showMainPanel({
         bot: botInstance,
         chatId,
@@ -38,6 +39,7 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
         telegramId,
         shiftsRepo: repositories.shifts,
         messages,
+        forceSend,
       }),
   })
 
@@ -64,6 +66,7 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
         shiftsRepo: repositories.shifts,
         messages,
         logger,
+        forceSend: true,
       }),
   })
 
