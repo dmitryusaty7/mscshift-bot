@@ -22,6 +22,7 @@ function registerShiftMenuModule({
   messages,
   logger,
   returnToMainPanel,
+  openCrewScene,
 }) {
   bot.onText(/\/shift(?:_menu)?/, async (msg) => {
     const chatId = msg.chat.id
@@ -48,6 +49,12 @@ function registerShiftMenuModule({
     const chatId = msg.chat.id
 
     if (!telegramId || !/^\d+$/.test(String(telegramId))) {
+      return
+    }
+
+    const state = getUserState(telegramId)
+
+    if (![USER_STATES.SHIFT_CREATION, USER_STATES.SHIFT_MENU].includes(state)) {
       return
     }
 
@@ -122,6 +129,13 @@ function registerShiftMenuModule({
 
     if (action && action.startsWith('shift:')) {
       await bot.answerCallbackQuery(query.id, { text: messages.shiftMenu.sectionRedirect })
+
+      if (action === 'shift:crew' && openCrewScene) {
+        // TODO: Code Review for mergeability
+        await openCrewScene({ bot, chatId, telegramId, session })
+        return
+      }
+
       // TODO: переключать пользователя в нужный блок и обновлять статусы после завершения блока
       return
     }
