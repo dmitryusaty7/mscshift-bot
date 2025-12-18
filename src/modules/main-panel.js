@@ -18,7 +18,6 @@ function registerMainPanelModule({ bot, brigadiersRepo, shiftsRepo, messages, lo
 
   bot.on('message', async (msg) => {
     const telegramId = msg.from?.id
-
     if (!telegramId || !/^\d+$/.test(String(telegramId)) || msg.text?.startsWith('/')) {
       return
     }

@@ -43,7 +43,6 @@ function registerShiftMenuModule({
   bot.on('message', async (msg) => {
     const telegramId = msg.from?.id
     const chatId = msg.chat.id
-
     if (!telegramId || !/^\d+$/.test(String(telegramId))) {
       return
     }

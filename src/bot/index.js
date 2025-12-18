@@ -33,7 +33,6 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
     logger,
     messages,
   })
-
   registerShiftMenuModule({
     bot,
     brigadiersRepo: repositories.brigadiers,
