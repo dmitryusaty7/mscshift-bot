@@ -24,8 +24,8 @@ function registerShiftMenuModule({
     const chatId = msg.chat.id
     const telegramId = msg.from?.id
 
-    if (!telegramId) {
-      logger.error('Не удалось определить telegram_id у пользователя')
+    if (!telegramId || !/^\d+$/.test(String(telegramId))) {
+      logger.error('Не удалось определить корректный telegram_id у пользователя', { telegramId })
       await bot.sendMessage(chatId, messages.systemError)
       return
     }
@@ -43,8 +43,7 @@ function registerShiftMenuModule({
   bot.on('message', async (msg) => {
     const telegramId = msg.from?.id
     const chatId = msg.chat.id
-
-    if (!telegramId) {
+    if (!telegramId || !/^\d+$/.test(String(telegramId))) {
       return
     }
 

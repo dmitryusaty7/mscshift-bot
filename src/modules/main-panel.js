@@ -7,8 +7,8 @@ function registerMainPanelModule({ bot, brigadiersRepo, shiftsRepo, messages, lo
     const chatId = msg.chat.id
     const telegramId = msg.from?.id
 
-    if (!telegramId) {
-      logger.error('Не удалось определить telegram_id у пользователя')
+    if (!telegramId || !/^\d+$/.test(String(telegramId))) {
+      logger.error('Не удалось определить корректный telegram_id у пользователя', { telegramId })
       await bot.sendMessage(chatId, messages.systemError)
       return
     }
@@ -18,8 +18,7 @@ function registerMainPanelModule({ bot, brigadiersRepo, shiftsRepo, messages, lo
 
   bot.on('message', async (msg) => {
     const telegramId = msg.from?.id
-
-    if (!telegramId || msg.text?.startsWith('/')) {
+    if (!telegramId || !/^\d+$/.test(String(telegramId)) || msg.text?.startsWith('/')) {
       return
     }
 

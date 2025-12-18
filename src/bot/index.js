@@ -27,13 +27,6 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
       showMainPanel({ bot: botInstance, chatId, brigadier, shiftsRepo: repositories.shifts, messages }),
   })
 
-  registerRegistrationModule({
-    bot,
-    brigadiersRepo: repositories.brigadiers,
-    logger,
-    messages,
-  })
-
   registerPhotoHandler({
     bot,
     directusClient,

@@ -8,8 +8,8 @@ function registerStartHandler({ bot, brigadiersRepo, logger, messages, showMainP
     const telegramId = msg.from?.id
     const firstName = msg.from?.first_name || ''
 
-    if (!telegramId) {
-      logger.error('Не удалось определить telegram_id у пользователя')
+    if (!telegramId || !/^\d+$/.test(String(telegramId))) {
+      logger.error('Не удалось определить корректный telegram_id у пользователя', { telegramId })
       await bot.sendMessage(chatId, messages.systemError)
 
       return

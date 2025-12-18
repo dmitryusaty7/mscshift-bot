@@ -15,8 +15,9 @@ function registerRegistrationModule({ bot, brigadiersRepo, messages, logger, sho
     const telegramId = msg.from?.id
     const chatId = msg.chat.id
 
-    if (!telegramId) {
+    if (!telegramId || !/^\d+$/.test(String(telegramId))) {
       // TODO: добавить алерт в админку
+      await bot.sendMessage(chatId, messages.systemError)
       return
     }
 
@@ -101,9 +102,17 @@ async function handleLastNameStep({ bot, msg, telegramId, chatId, brigadiersRepo
 
   const lastName = normalizeName(lastNameRaw)
 
+  const normalizedTelegramId = String(telegramId)
+
+  if (!/^\d+$/.test(normalizedTelegramId)) {
+    logger.error('Получен некорректный telegram_id при регистрации', { telegramId })
+    await bot.sendMessage(chatId, messages.systemError)
+    return
+  }
+
   try {
     const brigadier = await brigadiersRepo.create({
-      telegramId: String(telegramId),
+      telegramId: normalizedTelegramId,
       firstName: session.data.firstName,
       lastName,
     })
@@ -126,6 +135,7 @@ async function handleLastNameStep({ bot, msg, telegramId, chatId, brigadiersRepo
     // TODO: уведомить админов о падении
   }
 }
+
 // Валидация имени/фамилии: кириллица, 2-50 символов, первая буква заглавная
 function isValidName(value) {
   if (!value) return false
