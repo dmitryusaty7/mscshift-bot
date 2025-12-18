@@ -23,7 +23,7 @@ function registerStartHandler({ bot, brigadiersRepo, logger, messages, showMainP
         setUserState(telegramId, USER_STATES.MAIN_PANEL)
         await bot.sendMessage(chatId, messages.welcomeExistingUser(helloName))
         if (showMainPanel) {
-          await showMainPanel({ bot, chatId, brigadier })
+          await showMainPanel({ bot, chatId, brigadier, telegramId })
         } else {
           await bot.sendMessage(chatId, messages.mainPanelRedirect)
         }

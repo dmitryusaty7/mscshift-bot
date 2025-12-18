@@ -124,7 +124,7 @@ async function handleLastNameStep({ bot, msg, telegramId, chatId, brigadiersRepo
 
     await bot.sendMessage(chatId, messages.registration.completed(fullName))
     if (showMainPanel) {
-      await showMainPanel({ bot, chatId, brigadier })
+      await showMainPanel({ bot, chatId, brigadier, telegramId })
     } else {
       await bot.sendMessage(chatId, messages.mainPanelRedirect)
       // TODO: перейти в блок основной панели

@@ -5,6 +5,7 @@ function createShiftsRepo(pool) {
     createShiftWithHolds,
     countActiveByBrigadier,
     getActiveByBrigadier,
+    findActiveByIdAndBrigadier,
   }
 
   // Проверяем, есть ли смена с такой датой, бригадиром и судном
@@ -113,6 +114,30 @@ function createShiftsRepo(pool) {
 
     const { rows } = await pool.query(query, [brigadierId])
     return rows
+  }
+
+  // Ищем активную смену по идентификатору и бригадиру
+  async function findActiveByIdAndBrigadier({ shiftId, brigadierId }) {
+    const query = `
+      SELECT s.id,
+             s.date,
+             s.holds_count,
+             s.is_crew_filled,
+             s.is_salary_filled,
+             s.is_materials_filled,
+             s.is_expenses_filled,
+             s.is_photos_filled,
+             sh.name AS ship_name
+      FROM shifts s
+      JOIN ships sh ON sh.id = s.ship_id
+      WHERE s.id = $1
+        AND s.brigadier_id = $2
+        AND s.is_closed = false
+      LIMIT 1
+    `
+
+    const { rows } = await pool.query(query, [shiftId, brigadierId])
+    return rows[0] || null
   }
 }
 
