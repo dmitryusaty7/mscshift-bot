@@ -1,9 +1,26 @@
 const { USER_STATES, setUserState, getUserState } = require('../bot/middlewares/session')
 
+// TODO: Review for merge — в этом модуле нет глобального bot, поэтому работаем через контекст с telegram
+function buildExpensesCtx(bot, chat) {
+  // TODO: Review for merge — привязываем chatId, чтобы использовать только ctx.telegram и ctx.reply
+  const safeChat = chat?.id ? chat : { id: chat }
+
+  return {
+    chat: safeChat,
+    reply: (text, extra) => bot.sendMessage(safeChat.id, text, extra),
+    telegram: {
+      // TODO: Review for merge — node-telegram-bot-api не добавляет telegram в бот, делаем обёртку руками
+      sendMessage: (chatId, text, extra) => bot.sendMessage(chatId, text, extra),
+      editMessageText: (chatId, messageId, _inlineMessageId, text, extra) =>
+        bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...(extra || {}) }),
+    },
+  }
+}
+
 // TODO: Review for merge — текст хаба расходов (Telegram запрещает пустой текст)
 const EXPENSES_HUB_TEXT =
-  'Расходы — общий обзор:\n\n' +
-  'Введите или измените суммы расходов.\n\n' +
+  'Расходы — общий обзор:\n' +
+  'Введите или измените суммы расходов.\n' +
   'Все значения отображаются на кнопках ниже.'
 
 // TODO: Review for merge — режимы блока расходов
@@ -30,7 +47,8 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
     }
 
     const telegramId = query.from?.id
-    const chatId = query.message?.chat.id
+    const chat = query.message?.chat
+    const chatId = chat?.id
     const session = chatId ? findSessionByChat(chatId) : null
 
     if (!session) {
@@ -38,32 +56,59 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
       return
     }
 
+    const ctx = buildExpensesCtx(bot, chat)
+
     try {
       if (action === 'expenses:food') {
         await bot.answerCallbackQuery(query.id)
-        await renderExpenseInput({ bot, chatId, mode: EXPENSES_MODES.INPUT_FOOD, messages })
+        await renderExpenseInput({ ctx, mode: EXPENSES_MODES.INPUT_FOOD, messages })
         updateSessionMode({ chatId, shiftId: session.shiftId, mode: EXPENSES_MODES.INPUT_FOOD })
         return
       }
 
       if (action === 'expenses:materials') {
         await bot.answerCallbackQuery(query.id)
-        await renderExpenseInput({ bot, chatId, mode: EXPENSES_MODES.INPUT_MATERIALS, messages })
+        await renderExpenseInput({ ctx, mode: EXPENSES_MODES.INPUT_MATERIALS, messages })
         updateSessionMode({ chatId, shiftId: session.shiftId, mode: EXPENSES_MODES.INPUT_MATERIALS })
         return
       }
 
       if (action === 'expenses:taxi') {
         await bot.answerCallbackQuery(query.id)
-        await renderExpenseInput({ bot, chatId, mode: EXPENSES_MODES.INPUT_TAXI, messages })
+        await renderExpenseInput({ ctx, mode: EXPENSES_MODES.INPUT_TAXI, messages })
         updateSessionMode({ chatId, shiftId: session.shiftId, mode: EXPENSES_MODES.INPUT_TAXI })
         return
       }
 
       if (action === 'expenses:other') {
         await bot.answerCallbackQuery(query.id)
-        await renderExpenseInput({ bot, chatId, mode: EXPENSES_MODES.INPUT_OTHER_AMOUNT, messages })
+        await renderExpenseInput({ ctx, mode: EXPENSES_MODES.INPUT_OTHER_AMOUNT, messages })
         updateSessionMode({ chatId, shiftId: session.shiftId, mode: EXPENSES_MODES.INPUT_OTHER_AMOUNT })
+        return
+      }
+
+      if (action === 'expenses:confirm') {
+        await bot.answerCallbackQuery(query.id)
+
+        if (!session.shiftId) {
+          return
+        }
+
+        // TODO: Review for merge — подтверждение фиксирует завершение блока расходов и возвращает в меню смены
+        await expensesRepo.markExpensesFilledOnExit(session.shiftId)
+        updateSessionMode({ chatId, shiftId: session.shiftId, mode: EXPENSES_MODES.HUB })
+
+        await returnToShiftMenu({
+          bot,
+          chatId,
+          telegramId,
+          shiftId: session.shiftId,
+          brigadiersRepo,
+          shiftsRepo,
+          messages,
+          logger,
+          openShiftMenu,
+        })
         return
       }
 
@@ -93,6 +138,7 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
     }
 
     const { shiftId, mode } = currentSession
+    const ctx = buildExpensesCtx(bot, msg.chat)
 
     if (msg.text?.startsWith('/')) {
       return
@@ -131,8 +177,14 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
         return
       }
 
-      await expensesRepo.ensureShiftExpensesRow(shiftId)
-      await renderExpensesHub({ bot, chatId, shiftId, messages, logger, expensesRepo, withKeyboard: true })
+      try {
+        await expensesRepo.ensureShiftExpensesRow(shiftId)
+        await renderExpensesHub({ ctx, shiftId, messages, logger, expensesRepo, withKeyboard: true })
+      } catch (error) {
+        // TODO: Review for merge — фиксируем ошибку, чтобы не заспамить пользователя
+        logger.error('Не удалось открыть хаб расходов', { error: error.stack || error.message })
+        await ctx.reply(messages.systemError)
+      }
       return
     }
 
@@ -154,7 +206,7 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
 
     if (msg.text === messages.expenses.input.back && mode !== EXPENSES_MODES.INTRO) {
       updateSessionMode({ chatId, shiftId, mode: EXPENSES_MODES.HUB })
-      await renderExpensesHub({ bot, chatId, shiftId, messages, logger, expensesRepo, withKeyboard: true })
+      await renderExpensesHub({ ctx, shiftId, messages, logger, expensesRepo, withKeyboard: true })
       return
     }
 
@@ -176,22 +228,22 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
     }
 
     if (mode === EXPENSES_MODES.INPUT_FOOD) {
-      await processExpenseInput({ bot, chatId, shiftId, text: msg.text, column: 'food_amount', messages, logger, expensesRepo })
+      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, kind: 'food', messages, logger, expensesRepo })
       return
     }
 
     if (mode === EXPENSES_MODES.INPUT_MATERIALS) {
-      await processExpenseInput({ bot, chatId, shiftId, text: msg.text, column: 'materials_amount', messages, logger, expensesRepo })
+      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, kind: 'materials', messages, logger, expensesRepo })
       return
     }
 
     if (mode === EXPENSES_MODES.INPUT_TAXI) {
-      await processExpenseInput({ bot, chatId, shiftId, text: msg.text, column: 'taxi_amount', messages, logger, expensesRepo })
+      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, kind: 'taxi', messages, logger, expensesRepo })
       return
     }
 
     if (mode === EXPENSES_MODES.INPUT_OTHER_AMOUNT) {
-      await processExpenseInput({ bot, chatId, shiftId, text: msg.text, column: 'other_amount', messages, logger, expensesRepo, expectComment: true })
+      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, kind: 'other', messages, logger, expensesRepo, expectComment: true })
       return
     }
 
@@ -199,9 +251,9 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
       const parsed = parseExpenseValue(msg.text)
       if (parsed === null) {
         // Русский комментарий: если сумма уже сохранена и прилетает текст, принимаем его как комментарий
-        await expensesRepo.updateOtherComment({ shiftId, comment: msg.text })
+        await expensesRepo.saveOtherComment({ shiftId, comment: msg.text })
         updateSessionMode({ chatId, shiftId, mode: EXPENSES_MODES.HUB })
-        await renderExpensesHub({ bot, chatId, shiftId, messages, logger, expensesRepo, withKeyboard: true })
+        await renderExpensesHub({ ctx, shiftId, messages, logger, expensesRepo, withKeyboard: true })
         return
       }
 
@@ -214,14 +266,19 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
   async function openExpensesFromShiftMenu({ chatId, telegramId, session }) {
     try {
       const shiftId = session?.data?.shiftId
+      const ctx = buildExpensesCtx(bot, { id: chatId })
 
       if (!shiftId) {
-        await bot.sendMessage(chatId, messages.expenses.intro.missingShift)
+        await ctx.reply(messages.expenses.intro.missingShift)
         setUserState(telegramId, USER_STATES.SHIFT_MENU)
         return
       }
 
       expensesSessions.set(buildSessionKey(chatId, shiftId), {
+        // TODO: Review for merge — сохраняем состояние посещённых категорий в сессии
+        // Русский комментарий: по умолчанию значения в БД могут быть 0, поэтому для появления кнопки подтверждения
+        // используем локальные флаги touched, которые отмечаются только при вводе пользователем
+        touched: { food: false, materials: false, taxi: false, other: false },
         shiftId,
         chatId,
         hubMessageId: null,
@@ -234,10 +291,10 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
       // TODO: Review for merge — предыдущая ошибка была из-за неверных колонок, гарантируем корректную строку перед экраном
       await expensesRepo.ensureShiftExpensesRow(shiftId)
 
-      await renderExpensesIntro({ bot, chatId, messages })
+      await renderExpensesIntro({ ctx, messages })
     } catch (error) {
       logger.error('Не удалось открыть блок расходов', { error: error.message })
-      await bot.sendMessage(chatId, messages.systemError)
+      await ctx.reply(messages.systemError)
     }
   }
 
@@ -245,8 +302,8 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
 }
 
 // TODO: Review for merge — показ вступительного экрана расходов
-async function renderExpensesIntro({ bot, chatId, messages }) {
-  await bot.sendMessage(chatId, messages.expenses.intro.text, {
+async function renderExpensesIntro({ ctx, messages }) {
+  await ctx.reply(messages.expenses.intro.text, {
     reply_markup: {
       keyboard: [
         [{ text: messages.expenses.intro.start }],
@@ -258,8 +315,21 @@ async function renderExpensesIntro({ bot, chatId, messages }) {
 }
 
 // TODO: Review for merge — вывод хаба расходов с актуальными значениями
-async function renderExpensesHub({ bot, chatId, shiftId, messages, logger, expensesRepo, withKeyboard = false }) {
+async function renderExpensesHub({ ctx, shiftId, messages, logger, expensesRepo, withKeyboard = false }) {
   try {
+    const chatId = ctx?.chat?.id
+
+    if (!chatId) {
+      // TODO: Review for merge — без chatId невозможно отрисовать хаб
+      return
+    }
+
+    if (!shiftId) {
+      // TODO: Review for merge — shiftId обязателен для доступа к расходам, возвращаем пользователя в меню смены
+      await ctx.reply(messages.expenses.intro.missingShift)
+      return
+    }
+
     const sessionKey = buildSessionKey(chatId, shiftId)
     const session = expensesSessions.get(sessionKey)
 
@@ -271,16 +341,21 @@ async function renderExpensesHub({ bot, chatId, shiftId, messages, logger, expen
     const data = await expensesRepo.getShiftExpenses(shiftId)
 
     if (!data) {
-      await bot.sendMessage(chatId, messages.systemError)
+      await ctx.reply(messages.systemError)
       return
     }
 
-    const inlineKeyboard = buildInlineKeyboard(data, messages)
+    // TODO: Review for merge — появление кнопки подтверждения зависит от локальных флагов touched, а не от значений по умолчанию
+    const allTouched = Boolean(
+      session?.touched?.food && session?.touched?.materials && session?.touched?.taxi && session?.touched?.other
+    )
+
+    const inlineKeyboard = buildInlineKeyboard(data, messages, allTouched)
 
     if (withKeyboard && !session.navMessageId) {
       // TODO: Review for merge — отправляем подсказку только один раз, чтобы не заспамить чат
       const navText = messages.expenses.hub.navHint || messages.expenses.hub.backToShift
-      const navMessage = await bot.telegram.sendMessage(chatId, navText, {
+      const navMessage = await ctx.telegram.sendMessage(chatId, navText, {
         reply_markup: {
           keyboard: [[{ text: messages.expenses.hub.backToShift }]],
           resize_keyboard: true,
@@ -303,15 +378,15 @@ async function renderExpensesHub({ bot, chatId, shiftId, messages, logger, expen
       },
     }
 
-    await upsertExpensesHubMessage(bot, chatId, session, sessionKey, hubText, options)
+    await upsertExpensesHubMessage(ctx, session, hubText, options)
   } catch (error) {
-    logger.error('Не удалось отрисовать хаб расходов', { error: error.message })
-    await bot.sendMessage(chatId, messages.systemError)
+    logger.error('Не удалось отрисовать хаб расходов', { error: error.stack || error.message })
+    await ctx.reply(messages.systemError)
   }
 }
 
 // TODO: Review for merge — показ экрана ввода суммы
-async function renderExpenseInput({ bot, chatId, mode, messages }) {
+async function renderExpenseInput({ ctx, mode, messages }) {
   const promptMap = {
     [EXPENSES_MODES.INPUT_FOOD]: messages.expenses.input.food,
     [EXPENSES_MODES.INPUT_MATERIALS]: messages.expenses.input.materials,
@@ -325,7 +400,7 @@ async function renderExpenseInput({ bot, chatId, mode, messages }) {
     return
   }
 
-  await bot.sendMessage(chatId, prompt, {
+  await ctx.reply(prompt, {
     reply_markup: {
       keyboard: [
         [{ text: messages.expenses.input.back }],
@@ -336,26 +411,49 @@ async function renderExpenseInput({ bot, chatId, mode, messages }) {
   })
 }
 
-// TODO: Review for merge — обработка ввода суммы
-async function processExpenseInput({ bot, chatId, shiftId, text, column, messages, logger, expensesRepo, expectComment = false }) {
+// TODO: Review for merge — обработка ввода суммы расходов по белому списку колонок
+async function processExpenseInput({ ctx, chatId, shiftId, text, kind, messages, logger, expensesRepo, expectComment = false }) {
   const parsed = parseExpenseValue(text)
 
   if (parsed === null) {
-    await bot.sendMessage(chatId, messages.expenses.input.invalidNumber)
+    await ctx.reply(messages.expenses.input.invalidNumber)
     return
   }
 
+  const columnForLog = {
+    food: 'food_amount',
+    materials: 'materials_amount',
+    taxi: 'taxi_amount',
+    other: 'other_amount',
+  }[kind]
+
+  // TODO: Review for merge — логируем только безопасный шаблон UPDATE с WHERE, без мультистейтмента
+  const amountSql = columnForLog
+    ? `UPDATE public.shift_expenses SET ${columnForLog} = $2::numeric, total_expenses = COALESCE(food_amount,0) + COALESCE(materials_amount,0) + COALESCE(taxi_amount,0) + COALESCE(other_amount,0), updated_at = now() WHERE shift_id = $1 RETURNING ...`
+    : null
+
   try {
-    await expensesRepo.updateExpenseAmount({ shiftId, column, value: parsed })
+    await expensesRepo.saveExpenseAmount({ shiftId, kind, amountRub: parsed })
     await expensesRepo.updateExpensesFilled(shiftId)
+
+    // TODO: Review for merge — отмечаем категорию как посещённую, чтобы определить момент показа кнопки подтверждения
+    setTouchedFlag({ chatId, shiftId, kind })
 
     const nextMode = expectComment ? EXPENSES_MODES.AWAIT_OTHER_COMMENT : EXPENSES_MODES.HUB
     updateSessionMode({ chatId, shiftId, mode: nextMode })
 
-    await renderExpensesHub({ bot, chatId, shiftId, messages, logger, expensesRepo, withKeyboard: true })
+    await renderExpensesHub({ ctx, shiftId, messages, logger, expensesRepo, withKeyboard: true })
   } catch (error) {
-    logger.error('Не удалось сохранить сумму расходов', { error: error.message })
-    await bot.sendMessage(chatId, messages.systemError)
+    const session = findSessionByChat(chatId)
+
+    // TODO: Review for merge — логируем детали запроса без утечки текста ввода
+    logger.error('Не удалось сохранить сумму расходов', {
+      ошибка: String(error?.message || error),
+      shiftId,
+      режим: session?.mode,
+      sql: amountSql,
+    })
+    await ctx.reply(messages.systemError)
   }
 }
 
@@ -379,11 +477,11 @@ function parseExpenseValue(text) {
 }
 
 // TODO: Review for merge — построение кнопок с отображением значений
-function buildInlineKeyboard(data, messages) {
+function buildInlineKeyboard(data, messages, allTouched) {
   const fallback = messages.expenses.hub.fallback
   const suffix = messages.expenses.hub.suffix
 
-  return [
+  const keyboard = [
     [
       {
         text: `${messages.expenses.hub.food} — ${formatRub(data.food_amount, fallback)} ${suffix}`,
@@ -409,6 +507,18 @@ function buildInlineKeyboard(data, messages) {
       },
     ],
   ]
+
+  if (allTouched) {
+    // TODO: Review for merge — кнопку подтверждения показываем только после ввода всех категорий в текущей сессии
+    keyboard.push([
+      {
+        text: '✅ Подтвердить',
+        callback_data: 'expenses:confirm',
+      },
+    ])
+  }
+
+  return keyboard
 }
 
 // TODO: Review for merge
@@ -435,6 +545,31 @@ function updateSessionMode({ chatId, shiftId, mode }) {
   expensesSessions.set(key, { ...session, mode })
 }
 
+// TODO: Review for merge — фиксируем факт ввода суммы по категории в текущей сессии
+// Русский комментарий: значения по умолчанию в БД могут быть нулями, поэтому используем отдельные флаги touched для показа кнопки
+// подтверждения только после реального ввода всех категорий
+function setTouchedFlag({ chatId, shiftId, kind }) {
+  const key = buildSessionKey(chatId, shiftId)
+  const session = expensesSessions.get(key)
+
+  if (!session) {
+    return
+  }
+
+  const nextTouched = {
+    food: Boolean(session.touched?.food),
+    materials: Boolean(session.touched?.materials),
+    taxi: Boolean(session.touched?.taxi),
+    other: Boolean(session.touched?.other),
+  }
+
+  if (Object.prototype.hasOwnProperty.call(nextTouched, kind)) {
+    nextTouched[kind] = true
+  }
+
+  expensesSessions.set(key, { ...session, touched: nextTouched })
+}
+
 // TODO: Review for merge — поиск сессии по чату
 function findSessionByChat(chatId) {
   for (const [key, value] of expensesSessions.entries()) {
@@ -451,21 +586,34 @@ function buildSessionKey(chatId, shiftId) {
 }
 
 // TODO: Review for merge — единая функция обновления/создания хаба без использования ctx.editMessageText
-async function upsertExpensesHubMessage(bot, chatId, session, sessionKey, text, extra) {
-  // Русский комментарий: в обработчиках сообщений нельзя полагаться на ctx.editMessageText, поэтому используем Telegram API
+async function upsertExpensesHubMessage(ctx, session, text, extra) {
+  // TODO: Review for merge — в контексте модуля нет глобального bot, используем ctx.telegram
+  const chatId = ctx?.chat?.id
+
+  if (!chatId) {
+    throw new Error('Expenses hub: missing chatId')
+  }
+
+  const safeText = String(text || '').trim()
+
+  if (!safeText) {
+    throw new Error('Expenses hub: empty text')
+  }
+
   if (session?.hubMessageId) {
     try {
-      await bot.telegram.editMessageText(chatId, session.hubMessageId, null, text, extra)
+      await ctx.telegram.editMessageText(chatId, session.hubMessageId, null, safeText, extra)
       return
     } catch (error) {
-      // TODO: Review for merge — если редактирование не удалось (сообщение удалено), не падаем, отправляем новое
+      // TODO: Review for merge — если редактирование не удалось (сообщение удалено/старое), отправляем новое
     }
   }
 
-  const msg = await bot.telegram.sendMessage(chatId, text, extra)
+  const msg = await ctx.telegram.sendMessage(chatId, safeText, extra)
   session.hubMessageId = msg.message_id
 
-  if (sessionKey) {
+  if (session?.shiftId) {
+    const sessionKey = buildSessionKey(chatId, session.shiftId)
     expensesSessions.set(sessionKey, session)
   }
 }
