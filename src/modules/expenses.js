@@ -131,7 +131,7 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
 
     if (msg.text === messages.expenses.input.back && mode !== EXPENSES_MODES.INTRO) {
       updateSessionMode({ chatId, shiftId, mode: EXPENSES_MODES.HUB })
-      await renderExpensesHub({ bot, chatId, shiftId, messages, logger, expensesRepo })
+      await renderExpensesHub({ bot, chatId, shiftId, messages, logger, expensesRepo, withKeyboard: true })
       return
     }
 
@@ -177,7 +177,7 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
         // Русский комментарий: если сумма уже сохранена и прилетает текст, принимаем его как комментарий
         await expensesRepo.updateOtherComment({ shiftId, comment: msg.text })
         updateSessionMode({ chatId, shiftId, mode: EXPENSES_MODES.HUB })
-        await renderExpensesHub({ bot, chatId, shiftId, messages, logger, expensesRepo })
+        await renderExpensesHub({ bot, chatId, shiftId, messages, logger, expensesRepo, withKeyboard: true })
         return
       }
 
