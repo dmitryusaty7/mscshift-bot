@@ -52,7 +52,7 @@ function registerSalaryModule({ bot, logger, messages, crewRepo, wagesRepo, shif
         await bot.answerCallbackQuery(query.id)
         const workerId = Number.parseInt(action.split(':')[2], 10)
         if (Number.isInteger(workerId)) {
-          await renderWorkerInput({ bot, chatId, telegramId, workerId, messages, crewRepo })
+          await renderWorkerInput({ bot, chatId, telegramId, workerId, messages, crewRepo, wagesRepo })
         }
         return
       }
@@ -337,14 +337,23 @@ async function renderSalaryHub({ bot, chatId, telegramId, messages, crewRepo, wa
     return
   }
 
-  const workerAmountMap = new Map(workersWages.map((item) => [item.worker_id, item.amount]))
+  // TODO: Review for merge — конвертируем суммы в числа, чтобы исключить ошибочную конкатенацию строк
+  const workerAmountMap = new Map(
+    workersWages.map((item) => [item.worker_id, Number.parseInt(item.amount, 10) || 0]),
+  )
 
-  const brigadierAmount = wages?.brigadier_amount || null
-  const deputyAmount = crew.deputy ? wages?.deputy_amount || null : null
-  const driverAmount = crew.driver ? wages?.driver_amount || null : null
-  const workersTotal = wages?.workers_total || 0
+  const brigadierAmount = wages?.brigadier_amount != null ? Number(wages.brigadier_amount) : null
+  const deputyAmount = crew.deputy && wages?.deputy_amount != null ? Number(wages.deputy_amount) : null
+  const driverAmount = crew.driver && wages?.driver_amount != null ? Number(wages.driver_amount) : null
+  const workersTotal = wages?.workers_total != null ? Number(wages.workers_total) : 0
 
-  const total = (brigadierAmount || 0) + (deputyAmount || 0) + (driverAmount || 0) + workersTotal
+  const total = calculateSalaryTotal({
+    // TODO: Review for merge — приводим суммы к Number перед расчётом, чтобы исключить конкатенацию строк
+    brigadier: brigadierAmount,
+    deputy: deputyAmount,
+    driver: driverAmount,
+    workers: workersTotal,
+  })
 
   const ready =
     Boolean(brigadierAmount) &&
@@ -437,7 +446,8 @@ async function renderSalaryHub({ bot, chatId, telegramId, messages, crewRepo, wa
   salarySessions.set(telegramId, session)
 
   if (withKeyboard) {
-    await bot.sendMessage(chatId, messages.salary.hub.navigationHint, {
+    await bot.sendMessage(chatId, messages.salary.hub.backToShift, {
+      // TODO: Review for merge — отправляем клавиатуру для возврата в меню без дополнительных подсказок
       reply_markup: {
         keyboard: [[{ text: messages.salary.hub.backToShift }]],
         resize_keyboard: true,
@@ -489,18 +499,20 @@ async function renderRoleInput({ bot, chatId, telegramId, role, messages }) {
 }
 
 // TODO: Review for merge — отображение формы ввода для рабочего
-async function renderWorkerInput({ bot, chatId, telegramId, workerId, messages, crewRepo }) {
+async function renderWorkerInput({ bot, chatId, telegramId, workerId, messages, crewRepo, wagesRepo }) {
   const session = salarySessions.get(telegramId)
 
   if (!session) {
+    // TODO: Review for merge — при отсутствии сессии возвращаемся в хаб зарплаты без ошибок
+    await renderSalaryHub({ bot, chatId, telegramId, messages, crewRepo, wagesRepo })
     return
   }
 
-  const crew = await crewRepo.getCrewByShift(session.shiftId)
-  const worker = crew.workers.find((item) => item.id === workerId)
+  const worker = await crewRepo.getShiftWorkerById({ shiftId: session.shiftId, workerId })
 
   if (!worker) {
-    await bot.sendMessage(chatId, messages.salary.errors.unavailable)
+    // TODO: Review for merge — используем данные сессии как единственный источник и возвращаем хаб без лишних сообщений
+    await renderSalaryHub({ bot, chatId, telegramId, messages, crewRepo, wagesRepo })
     return
   }
 
@@ -644,6 +656,17 @@ async function returnToShiftMenu({
     logger.error('Не удалось вернуться в меню смены из блока зарплаты', { error: error.message })
     await bot.sendMessage(chatId, messages.systemError)
   }
+}
+
+// TODO: Review for merge — аккуратно суммируем зарплаты с приведением типов
+function calculateSalaryTotal({ brigadier, deputy, driver, workers }) {
+  // Приводим каждое значение к Number, чтобы избежать конкатенации строк и плавающих типов
+  const brigadierAmount = Number(brigadier) || 0
+  const deputyAmount = Number(deputy) || 0
+  const driverAmount = Number(driver) || 0
+  const workersTotal = Number(workers) || 0
+
+  return brigadierAmount + deputyAmount + driverAmount + workersTotal
 }
 
 // TODO: Review for merge — вспомогательная функция форматирования ФИО

@@ -2,6 +2,7 @@
 function createCrewRepo(pool) {
   return {
     getCrewByShift,
+    getShiftWorkerById,
     findOrCreateDriver,
     findOrCreateWorker,
     upsertDriver,
@@ -52,6 +53,20 @@ function createCrewRepo(pool) {
         : null,
       workers: workersResult.rows.map((row) => ({ id: row.worker_id, fullName: row.full_name })),
     }
+  }
+
+  // TODO: Review for merge — получаем рабочего внутри конкретной смены для проверки принадлежности
+  async function getShiftWorkerById({ shiftId, workerId }) {
+    const query = `
+      SELECT w.id, w.full_name
+      FROM shift_workers sw
+      JOIN workers w ON w.id = sw.worker_id
+      WHERE sw.shift_id = $1 AND sw.worker_id = $2
+      LIMIT 1
+    `
+
+    const { rows } = await pool.query(query, [shiftId, workerId])
+    return rows[0] ? { id: rows[0].id, fullName: rows[0].full_name } : null
   }
 
   // Ищем или создаём водителя по ФИО
