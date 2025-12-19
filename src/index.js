@@ -7,6 +7,7 @@ const { createShipsRepo } = require('./db/ships.repo')
 const { createShiftsRepo } = require('./db/shifts.repo')
 const { createCrewRepo } = require('./db/crew.repo')
 const { createWagesRepo } = require('./db/wages.repo')
+const { createMaterialsRepo } = require('./db/materials.repo')
 const { createLogger } = require('./utils/logger')
 const { createDirectusClient } = require('./directus')
 
@@ -31,6 +32,7 @@ async function bootstrap() {
   const shiftsRepo = createShiftsRepo(pool)
   const crewRepo = createCrewRepo(pool)
   const wagesRepo = createWagesRepo(pool)
+  const materialsRepo = createMaterialsRepo(pool)
   const directusClient = createDirectusClient(config.directus, logger)
 
   createBot({
@@ -42,6 +44,7 @@ async function bootstrap() {
       shifts: shiftsRepo,
       crew: crewRepo,
       wages: wagesRepo,
+      materials: materialsRepo,
     },
     messages,
     directusClient,

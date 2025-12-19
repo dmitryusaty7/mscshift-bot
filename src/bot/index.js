@@ -6,6 +6,7 @@ const { registerShiftMenuModule, startShiftMenuFlow, openShiftMenu } = require('
 const { registerMainPanelModule, showMainPanel, openMainPanel } = require('../modules/main-panel')
 const { registerCrewModule } = require('../modules/crew')
 const { registerSalaryModule } = require('../modules/salary')
+const { registerMaterialsModule } = require('../modules/materials')
 
 // Создаём экземпляр бота и регистрируем обработчики
 function createBot({ token, logger, repositories, messages, directusClient }) {
@@ -29,6 +30,17 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
     messages,
     crewRepo: repositories.crew,
     wagesRepo: repositories.wages,
+    shiftsRepo: repositories.shifts,
+    brigadiersRepo: repositories.brigadiers,
+    openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
+      openShiftMenu({ bot, chatId, telegramId, brigadier, shift, messages, logger }),
+  })
+
+  const materialsModule = registerMaterialsModule({
+    bot,
+    logger,
+    messages,
+    materialsRepo: repositories.materials,
     shiftsRepo: repositories.shifts,
     brigadiersRepo: repositories.brigadiers,
     openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
@@ -98,6 +110,8 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
       crewModule.openCrewFromShiftMenu({ chatId, telegramId, session }),
     openSalaryScene: ({ chatId, telegramId, session }) =>
       salaryModule.openSalaryFromShiftMenu({ chatId, telegramId, session }),
+    openMaterialsScene: ({ chatId, telegramId, session }) =>
+      materialsModule.openMaterialsFromShiftMenu({ chatId, telegramId, session }),
   })
 
   registerMainPanelModule({
