@@ -27,6 +27,7 @@ function registerShiftMenuModule({
   returnToMainPanel,
   openCrewScene,
   openSalaryScene,
+  openMaterialsScene,
 }) {
   bot.onText(/\/shift(?:_menu)?/, async (msg) => {
     const chatId = msg.chat.id
@@ -150,6 +151,12 @@ function registerShiftMenuModule({
     if (action === 'shift:wages' && openSalaryScene) {
       // TODO: Review for merge — передаём управление блоку заработной платы
       await openSalaryScene({ chatId, telegramId, session })
+      return
+    }
+
+    if (action === 'shift:materials' && openMaterialsScene) {
+      // TODO: Review for merge — передаём управление блоку материалов
+      await openMaterialsScene({ chatId, telegramId, session })
       return
     }
 

@@ -1,6 +1,7 @@
 // Все тексты бота в одном месте
 const crew = require('./crew')
 const salary = require('./salary')
+const materials = require('./materials')
 
 const messages = {
   welcomeExistingUser: (name) =>
@@ -76,6 +77,7 @@ const messages = {
   },
   crew,
   salary,
+  materials,
 }
 
 module.exports = messages
