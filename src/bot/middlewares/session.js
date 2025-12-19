@@ -7,6 +7,7 @@ const USER_STATES = {
   SHIFT_CREATION: 'SHIFT_CREATION',
   SHIFT_MENU: 'SHIFT_MENU',
   SHIFT_CREW: 'SHIFT_CREW',
+  SHIFT_SALARY: 'SHIFT_SALARY',
 }
 
 const sessions = new Map()

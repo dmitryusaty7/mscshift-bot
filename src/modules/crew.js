@@ -21,7 +21,7 @@ const CREW_STEPS = {
 const crewSessions = new Map()
 
 // Регистрация модуля Блока 4 — состав бригады
-function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, brigadiersRepo, openShiftMenu }) {
+function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, brigadiersRepo, openShiftMenu, wagesRepo }) {
   bot.on('callback_query', async (query) => {
     const action = query.data
 
@@ -79,7 +79,17 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
         await bot.answerCallbackQuery(query.id)
         const workerId = Number.parseInt(action.split(':')[3], 10)
         if (Number.isInteger(workerId)) {
-          await removeWorkerHandler({ bot, chatId, telegramId, session, workerId, crewRepo, messages, logger })
+          await removeWorkerHandler({
+            bot,
+            chatId,
+            telegramId,
+            session,
+            workerId,
+            crewRepo,
+            messages,
+            logger,
+            wagesRepo,
+          })
         }
         return
       }
@@ -629,7 +639,17 @@ async function saveCurrentInput({ bot, chatId, telegramId, session, role, crewRe
 
 
 // Русский комментарий: обработка удаления рабочего
-async function removeWorkerHandler({ bot, chatId, telegramId, session, workerId, crewRepo, messages, logger }) {
+async function removeWorkerHandler({
+  bot,
+  chatId,
+  telegramId,
+  session,
+  workerId,
+  crewRepo,
+  messages,
+  logger,
+  wagesRepo,
+}) {
   try {
     const crew = await crewRepo.getCrewByShift(session.data.shiftId)
     const worker = crew.workers.find((item) => item.id === workerId)
@@ -638,6 +658,12 @@ async function removeWorkerHandler({ bot, chatId, telegramId, session, workerId,
     // TODO: Review for merge — полностью удаляем запись рабочего, чтобы не оставлять сироты
     if (removed) {
       await crewRepo.deleteWorkerWithRelations(workerId)
+      // TODO: Review for merge — удаляем зарплату рабочего и сбрасываем статусы зарплаты
+      if (wagesRepo) {
+        await wagesRepo.deleteWorkerWage({ shiftId: session.data.shiftId, workerId })
+        await wagesRepo.recalcWorkersTotal(session.data.shiftId)
+        await wagesRepo.invalidateSalaryFlag(session.data.shiftId)
+      }
     }
 
     if (removed) {
