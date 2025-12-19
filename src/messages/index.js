@@ -2,6 +2,7 @@
 const crew = require('./crew')
 const salary = require('./salary')
 const materials = require('./materials')
+const expenses = require('./expenses')
 
 const messages = {
   welcomeExistingUser: (name) =>
@@ -78,6 +79,7 @@ const messages = {
   crew,
   salary,
   materials,
+  expenses,
 }
 
 module.exports = messages

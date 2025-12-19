@@ -9,6 +9,8 @@ const USER_STATES = {
   SHIFT_CREW: 'SHIFT_CREW',
   SHIFT_SALARY: 'SHIFT_SALARY',
   SHIFT_MATERIALS: 'SHIFT_MATERIALS',
+  // TODO: Review for merge — состояние работы с расходами
+  SHIFT_EXPENSES: 'SHIFT_EXPENSES',
 }
 
 const sessions = new Map()
