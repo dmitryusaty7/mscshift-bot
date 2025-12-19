@@ -109,12 +109,13 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
 
     if (msg.text === messages.expenses.intro.start && mode === EXPENSES_MODES.INTRO) {
       updateSessionMode({ chatId, shiftId, mode: EXPENSES_MODES.HUB })
-      await expensesRepo.ensureShiftExpenses(shiftId)
+      await expensesRepo.ensureShiftExpensesRow(shiftId)
       await renderExpensesHub({ bot, chatId, shiftId, messages, logger, expensesRepo, withKeyboard: true })
       return
     }
 
     if (msg.text === messages.expenses.hub.backToShift) {
+      await expensesRepo.markExpensesFilledOnExit(shiftId)
       await returnToShiftMenu({
         bot,
         chatId,
@@ -137,6 +138,7 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
 
     if (msg.text === messages.expenses.input.backToShift) {
       updateSessionMode({ chatId, shiftId, mode: EXPENSES_MODES.HUB })
+      await expensesRepo.markExpensesFilledOnExit(shiftId)
       await returnToShiftMenu({
         bot,
         chatId,
@@ -152,22 +154,22 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
     }
 
     if (mode === EXPENSES_MODES.INPUT_FOOD) {
-      await processExpenseInput({ bot, chatId, shiftId, text: msg.text, column: 'food', messages, logger, expensesRepo })
+      await processExpenseInput({ bot, chatId, shiftId, text: msg.text, column: 'food_amount', messages, logger, expensesRepo })
       return
     }
 
     if (mode === EXPENSES_MODES.INPUT_MATERIALS) {
-      await processExpenseInput({ bot, chatId, shiftId, text: msg.text, column: 'materials', messages, logger, expensesRepo })
+      await processExpenseInput({ bot, chatId, shiftId, text: msg.text, column: 'materials_amount', messages, logger, expensesRepo })
       return
     }
 
     if (mode === EXPENSES_MODES.INPUT_TAXI) {
-      await processExpenseInput({ bot, chatId, shiftId, text: msg.text, column: 'taxi', messages, logger, expensesRepo })
+      await processExpenseInput({ bot, chatId, shiftId, text: msg.text, column: 'taxi_amount', messages, logger, expensesRepo })
       return
     }
 
     if (mode === EXPENSES_MODES.INPUT_OTHER_AMOUNT) {
-      await processExpenseInput({ bot, chatId, shiftId, text: msg.text, column: 'other', messages, logger, expensesRepo, expectComment: true })
+      await processExpenseInput({ bot, chatId, shiftId, text: msg.text, column: 'other_amount', messages, logger, expensesRepo, expectComment: true })
       return
     }
 
@@ -206,7 +208,8 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
 
       setUserState(telegramId, USER_STATES.SHIFT_EXPENSES)
 
-      await expensesRepo.ensureShiftExpenses(shiftId)
+      // TODO: Review for merge — предыдущая ошибка была из-за неверных колонок, гарантируем корректную строку перед экраном
+      await expensesRepo.ensureShiftExpensesRow(shiftId)
 
       await renderExpensesIntro({ bot, chatId, messages })
     } catch (error) {
@@ -240,7 +243,7 @@ async function renderExpensesHub({ bot, chatId, shiftId, messages, logger, expen
       return
     }
 
-    await expensesRepo.ensureShiftExpenses(shiftId)
+    await expensesRepo.ensureShiftExpensesRow(shiftId)
     const data = await expensesRepo.getShiftExpenses(shiftId)
 
     if (!data) {
@@ -368,34 +371,44 @@ function buildInlineKeyboard(data, messages) {
   const fallback = messages.expenses.hub.fallback
   const suffix = messages.expenses.hub.suffix
 
-  const format = (value) => (value === null || value === undefined ? fallback : value)
-
   return [
     [
       {
-        text: `${messages.expenses.hub.food} — ${format(data.food)} ${suffix}`,
+        text: `${messages.expenses.hub.food} — ${formatRub(data.food_amount, fallback)} ${suffix}`,
         callback_data: 'expenses:food',
       },
     ],
     [
       {
-        text: `${messages.expenses.hub.materials} — ${format(data.materials)} ${suffix}`,
+        text: `${messages.expenses.hub.materials} — ${formatRub(data.materials_amount, fallback)} ${suffix}`,
         callback_data: 'expenses:materials',
       },
     ],
     [
       {
-        text: `${messages.expenses.hub.taxi} — ${format(data.taxi)} ${suffix}`,
+        text: `${messages.expenses.hub.taxi} — ${formatRub(data.taxi_amount, fallback)} ${suffix}`,
         callback_data: 'expenses:taxi',
       },
     ],
     [
       {
-        text: `${messages.expenses.hub.other} — ${format(data.other)} ${suffix}`,
+        text: `${messages.expenses.hub.other} — ${formatRub(data.other_amount, fallback)} ${suffix}`,
         callback_data: 'expenses:other',
       },
     ],
   ]
+}
+
+// TODO: Review for merge
+// Приводим numeric(12,2) из БД к рублям без копеек для UI
+function formatRub(val, fallback) {
+  const n = Number(val)
+
+  if (!Number.isFinite(n)) {
+    return fallback
+  }
+
+  return String(Math.trunc(n))
 }
 
 // TODO: Review for merge — обновление режима сессии
