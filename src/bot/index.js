@@ -7,6 +7,8 @@ const { registerMainPanelModule, showMainPanel, openMainPanel } = require('../mo
 const { registerCrewModule } = require('../modules/crew')
 const { registerSalaryModule } = require('../modules/salary')
 const { registerMaterialsModule } = require('../modules/materials')
+// TODO: Review for merge — регистрация блока расходов
+const { registerExpensesModule } = require('../modules/expenses')
 
 // Создаём экземпляр бота и регистрируем обработчики
 function createBot({ token, logger, repositories, messages, directusClient }) {
@@ -41,6 +43,18 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
     logger,
     messages,
     materialsRepo: repositories.materials,
+    shiftsRepo: repositories.shifts,
+    brigadiersRepo: repositories.brigadiers,
+    openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
+      openShiftMenu({ bot, chatId, telegramId, brigadier, shift, messages, logger }),
+  })
+
+  // TODO: Review for merge — подключаем блок расходов
+  const expensesModule = registerExpensesModule({
+    bot,
+    logger,
+    messages,
+    expensesRepo: repositories.expenses,
     shiftsRepo: repositories.shifts,
     brigadiersRepo: repositories.brigadiers,
     openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
@@ -112,6 +126,8 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
       salaryModule.openSalaryFromShiftMenu({ chatId, telegramId, session }),
     openMaterialsScene: ({ chatId, telegramId, session }) =>
       materialsModule.openMaterialsFromShiftMenu({ chatId, telegramId, session }),
+    openExpensesScene: ({ chatId, telegramId, session }) =>
+      expensesModule.openExpensesFromShiftMenu({ chatId, telegramId, session }),
   })
 
   registerMainPanelModule({
