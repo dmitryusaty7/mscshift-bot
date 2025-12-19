@@ -87,6 +87,31 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
         return
       }
 
+      if (action === 'expenses:confirm') {
+        await bot.answerCallbackQuery(query.id)
+
+        if (!session.shiftId) {
+          return
+        }
+
+        // TODO: Review for merge — подтверждение фиксирует завершение блока расходов и возвращает в меню смены
+        await expensesRepo.markExpensesFilledOnExit(session.shiftId)
+        updateSessionMode({ chatId, shiftId: session.shiftId, mode: EXPENSES_MODES.HUB })
+
+        await returnToShiftMenu({
+          bot,
+          chatId,
+          telegramId,
+          shiftId: session.shiftId,
+          brigadiersRepo,
+          shiftsRepo,
+          messages,
+          logger,
+          openShiftMenu,
+        })
+        return
+      }
+
       await bot.answerCallbackQuery(query.id)
     } catch (error) {
       logger.error('Ошибка обработки callback в блоке расходов', { error: error.message })
@@ -250,6 +275,10 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
       }
 
       expensesSessions.set(buildSessionKey(chatId, shiftId), {
+        // TODO: Review for merge — сохраняем состояние посещённых категорий в сессии
+        // Русский комментарий: по умолчанию значения в БД могут быть 0, поэтому для появления кнопки подтверждения
+        // используем локальные флаги touched, которые отмечаются только при вводе пользователем
+        touched: { food: false, materials: false, taxi: false, other: false },
         shiftId,
         chatId,
         hubMessageId: null,
@@ -316,7 +345,12 @@ async function renderExpensesHub({ ctx, shiftId, messages, logger, expensesRepo,
       return
     }
 
-    const inlineKeyboard = buildInlineKeyboard(data, messages)
+    // TODO: Review for merge — появление кнопки подтверждения зависит от локальных флагов touched, а не от значений по умолчанию
+    const allTouched = Boolean(
+      session?.touched?.food && session?.touched?.materials && session?.touched?.taxi && session?.touched?.other
+    )
+
+    const inlineKeyboard = buildInlineKeyboard(data, messages, allTouched)
 
     if (withKeyboard && !session.navMessageId) {
       // TODO: Review for merge — отправляем подсказку только один раз, чтобы не заспамить чат
@@ -402,6 +436,9 @@ async function processExpenseInput({ ctx, chatId, shiftId, text, kind, messages,
     await expensesRepo.saveExpenseAmount({ shiftId, kind, amountRub: parsed })
     await expensesRepo.updateExpensesFilled(shiftId)
 
+    // TODO: Review for merge — отмечаем категорию как посещённую, чтобы определить момент показа кнопки подтверждения
+    setTouchedFlag({ chatId, shiftId, kind })
+
     const nextMode = expectComment ? EXPENSES_MODES.AWAIT_OTHER_COMMENT : EXPENSES_MODES.HUB
     updateSessionMode({ chatId, shiftId, mode: nextMode })
 
@@ -440,11 +477,11 @@ function parseExpenseValue(text) {
 }
 
 // TODO: Review for merge — построение кнопок с отображением значений
-function buildInlineKeyboard(data, messages) {
+function buildInlineKeyboard(data, messages, allTouched) {
   const fallback = messages.expenses.hub.fallback
   const suffix = messages.expenses.hub.suffix
 
-  return [
+  const keyboard = [
     [
       {
         text: `${messages.expenses.hub.food} — ${formatRub(data.food_amount, fallback)} ${suffix}`,
@@ -470,6 +507,18 @@ function buildInlineKeyboard(data, messages) {
       },
     ],
   ]
+
+  if (allTouched) {
+    // TODO: Review for merge — кнопку подтверждения показываем только после ввода всех категорий в текущей сессии
+    keyboard.push([
+      {
+        text: '✅ Подтвердить',
+        callback_data: 'expenses:confirm',
+      },
+    ])
+  }
+
+  return keyboard
 }
 
 // TODO: Review for merge
@@ -494,6 +543,31 @@ function updateSessionMode({ chatId, shiftId, mode }) {
   }
 
   expensesSessions.set(key, { ...session, mode })
+}
+
+// TODO: Review for merge — фиксируем факт ввода суммы по категории в текущей сессии
+// Русский комментарий: значения по умолчанию в БД могут быть нулями, поэтому используем отдельные флаги touched для показа кнопки
+// подтверждения только после реального ввода всех категорий
+function setTouchedFlag({ chatId, shiftId, kind }) {
+  const key = buildSessionKey(chatId, shiftId)
+  const session = expensesSessions.get(key)
+
+  if (!session) {
+    return
+  }
+
+  const nextTouched = {
+    food: Boolean(session.touched?.food),
+    materials: Boolean(session.touched?.materials),
+    taxi: Boolean(session.touched?.taxi),
+    other: Boolean(session.touched?.other),
+  }
+
+  if (Object.prototype.hasOwnProperty.call(nextTouched, kind)) {
+    nextTouched[kind] = true
+  }
+
+  expensesSessions.set(key, { ...session, touched: nextTouched })
 }
 
 // TODO: Review for merge — поиск сессии по чату
