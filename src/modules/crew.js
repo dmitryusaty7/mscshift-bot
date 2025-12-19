@@ -635,6 +635,10 @@ async function removeWorkerHandler({ bot, chatId, telegramId, session, workerId,
     const worker = crew.workers.find((item) => item.id === workerId)
 
     const removed = await crewRepo.removeWorkerFromShift({ shiftId: session.data.shiftId, workerId })
+    // TODO: Review for merge — полностью удаляем запись рабочего, чтобы не оставлять сироты
+    if (removed) {
+      await crewRepo.deleteWorkerWithRelations(workerId)
+    }
 
     if (removed) {
       await bot.sendMessage(chatId, messages.crew.workers.removed(worker?.fullName || ''))

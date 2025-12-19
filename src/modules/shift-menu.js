@@ -122,6 +122,13 @@ function registerShiftMenuModule({
   })
 
   bot.on('callback_query', async (query) => {
+    const action = query.data
+
+    if (!action || !action.startsWith('shift:')) {
+      await bot.answerCallbackQuery(query.id)
+      return
+    }
+
     const telegramId = query.from?.id
     const chatId = query.message?.chat.id
     const session = telegramId ? shiftSessions.get(telegramId) : null
@@ -131,25 +138,15 @@ function registerShiftMenuModule({
       return
     }
 
-    const action = query.data
+    await bot.answerCallbackQuery(query.id, { text: messages.shiftMenu.sectionRedirect })
 
-    if (action && action.startsWith('shift:')) {
-      await bot.answerCallbackQuery(query.id, { text: messages.shiftMenu.sectionRedirect })
-
-      if (action === 'shift:crew' && openCrewScene) {
-        // TODO: Code Review for mergeability
-        await openCrewScene({ bot, chatId, telegramId, session })
-        return
-      }
-
-      // TODO: переключать пользователя в нужный блок и обновлять статусы после завершения блока
+    if (action === 'shift:crew' && openCrewScene) {
+      // TODO: Review for merge — передаём управление блоку состава бригады
+      await openCrewScene({ bot, chatId, telegramId, session })
       return
     }
 
-    await bot.answerCallbackQuery(query.id)
-    if (chatId) {
-      await bot.sendMessage(chatId, messages.shiftMenu.sectionUnknown)
-    }
+    // TODO: переключать пользователя в нужный блок и обновлять статусы после завершения блока
   })
 }
 

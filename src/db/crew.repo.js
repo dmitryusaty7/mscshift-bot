@@ -9,6 +9,7 @@ function createCrewRepo(pool) {
     clearDeputy,
     addWorkerToShift,
     removeWorkerFromShift,
+    deleteWorkerWithRelations,
     recalcCrewFilled,
   }
 
@@ -152,6 +153,14 @@ function createCrewRepo(pool) {
   async function removeWorkerFromShift({ shiftId, workerId }) {
     const query = 'DELETE FROM shift_workers WHERE shift_id = $1 AND worker_id = $2'
     const result = await pool.query(query, [shiftId, workerId])
+    return result.rowCount > 0
+  }
+
+  // Полностью удаляем рабочего и все связанные записи
+  async function deleteWorkerWithRelations(workerId) {
+    // TODO: Review for merge — удаляем связи и саму запись рабочего
+    await pool.query('DELETE FROM shift_workers WHERE worker_id = $1', [workerId])
+    const result = await pool.query('DELETE FROM workers WHERE id = $1', [workerId])
     return result.rowCount > 0
   }
 
