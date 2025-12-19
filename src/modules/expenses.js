@@ -1,5 +1,11 @@
 const { USER_STATES, setUserState, getUserState } = require('../bot/middlewares/session')
 
+// TODO: Review for merge — текст хаба расходов (Telegram запрещает пустой текст)
+const EXPENSES_HUB_TEXT =
+  'Расходы — общий обзор:\n\n' +
+  'Введите или измените суммы расходов.\n\n' +
+  'Все значения отображаются на кнопках ниже.'
+
 // TODO: Review for merge — режимы блока расходов
 const EXPENSES_MODES = {
   INTRO: 'INTRO',
@@ -109,6 +115,22 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
 
     if (msg.text === messages.expenses.intro.start && mode === EXPENSES_MODES.INTRO) {
       updateSessionMode({ chatId, shiftId, mode: EXPENSES_MODES.HUB })
+      if (!shiftId) {
+        // TODO: Review for merge — shiftId обязателен, при его отсутствии возвращаемся в меню смены
+        await returnToShiftMenu({
+          bot,
+          chatId,
+          telegramId,
+          shiftId,
+          brigadiersRepo,
+          shiftsRepo,
+          messages,
+          logger,
+          openShiftMenu,
+        })
+        return
+      }
+
       await expensesRepo.ensureShiftExpensesRow(shiftId)
       await renderExpensesHub({ bot, chatId, shiftId, messages, logger, expensesRepo, withKeyboard: true })
       return
@@ -203,6 +225,7 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
         shiftId,
         chatId,
         hubMessageId: null,
+        navMessageId: null,
         mode: EXPENSES_MODES.INTRO,
       })
 
@@ -237,7 +260,8 @@ async function renderExpensesIntro({ bot, chatId, messages }) {
 // TODO: Review for merge — вывод хаба расходов с актуальными значениями
 async function renderExpensesHub({ bot, chatId, shiftId, messages, logger, expensesRepo, withKeyboard = false }) {
   try {
-    const session = expensesSessions.get(buildSessionKey(chatId, shiftId))
+    const sessionKey = buildSessionKey(chatId, shiftId)
+    const session = expensesSessions.get(sessionKey)
 
     if (!session) {
       return
@@ -253,20 +277,24 @@ async function renderExpensesHub({ bot, chatId, shiftId, messages, logger, expen
 
     const inlineKeyboard = buildInlineKeyboard(data, messages)
 
-    if (withKeyboard) {
-      // Русский комментарий: отправляем временное сообщение, чтобы обновить реплай-клавиатуру без дублирования хаба
-      const keyboardMessage = await bot.sendMessage(chatId, ' ', {
+    if (withKeyboard && !session.navMessageId) {
+      // TODO: Review for merge — отправляем подсказку только один раз, чтобы не заспамить чат
+      const navText = messages.expenses.hub.navHint || messages.expenses.hub.backToShift
+      const navMessage = await bot.telegram.sendMessage(chatId, navText, {
         reply_markup: {
           keyboard: [[{ text: messages.expenses.hub.backToShift }]],
           resize_keyboard: true,
         },
       })
-      try {
-        await bot.deleteMessage(chatId, keyboardMessage.message_id)
-      } catch (error) {
-        // Русский комментарий: если удалить сообщение не удалось, оставляем его как временную подсказку
-        logger.warn('Не удалось удалить служебное сообщение клавиатуры расходов', { error: error.message })
-      }
+      session.navMessageId = navMessage.message_id
+      expensesSessions.set(sessionKey, session)
+    }
+
+    // TODO: Review for merge — Telegram требует непустой текст для сообщений
+    const hubText = (EXPENSES_HUB_TEXT || '').trim()
+
+    if (!hubText) {
+      throw new Error('Expenses hub text is empty')
     }
 
     const options = {
@@ -275,23 +303,7 @@ async function renderExpensesHub({ bot, chatId, shiftId, messages, logger, expen
       },
     }
 
-    if (session.hubMessageId) {
-      try {
-        await bot.editMessageText(messages.expenses.hub.title, {
-          chat_id: chatId,
-          message_id: session.hubMessageId,
-          reply_markup: options.reply_markup,
-        })
-      } catch (error) {
-        // Русский комментарий: если исходное сообщение недоступно, отправляем новое и обновляем идентификатор
-        const sent = await bot.sendMessage(chatId, messages.expenses.hub.title, options)
-        expensesSessions.set(buildSessionKey(chatId, shiftId), { ...session, hubMessageId: sent.message_id })
-      }
-      return
-    }
-
-    const sent = await bot.sendMessage(chatId, messages.expenses.hub.title, options)
-    expensesSessions.set(buildSessionKey(chatId, shiftId), { ...session, hubMessageId: sent.message_id })
+    await upsertExpensesHubMessage(bot, chatId, session, sessionKey, hubText, options)
   } catch (error) {
     logger.error('Не удалось отрисовать хаб расходов', { error: error.message })
     await bot.sendMessage(chatId, messages.systemError)
@@ -436,6 +448,26 @@ function findSessionByChat(chatId) {
 // TODO: Review for merge — построение ключа сессии
 function buildSessionKey(chatId, shiftId) {
   return `${chatId}:${shiftId}`
+}
+
+// TODO: Review for merge — единая функция обновления/создания хаба без использования ctx.editMessageText
+async function upsertExpensesHubMessage(bot, chatId, session, sessionKey, text, extra) {
+  // Русский комментарий: в обработчиках сообщений нельзя полагаться на ctx.editMessageText, поэтому используем Telegram API
+  if (session?.hubMessageId) {
+    try {
+      await bot.telegram.editMessageText(chatId, session.hubMessageId, null, text, extra)
+      return
+    } catch (error) {
+      // TODO: Review for merge — если редактирование не удалось (сообщение удалено), не падаем, отправляем новое
+    }
+  }
+
+  const msg = await bot.telegram.sendMessage(chatId, text, extra)
+  session.hubMessageId = msg.message_id
+
+  if (sessionKey) {
+    expensesSessions.set(sessionKey, session)
+  }
 }
 
 // TODO: Review for merge — возврат в меню смены
