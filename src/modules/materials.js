@@ -11,6 +11,12 @@ const MATERIAL_KEYS = {
 
 const materialsSessions = new Map()
 
+// TODO: Review for merge — шаги сценария материалов (вступление и хаб)
+const MATERIAL_STEPS = {
+  INTRO: 'INTRO',
+  HUB: 'HUB',
+}
+
 // TODO: Review for merge — регистрация модуля Блока 6 «Материалы»
 function registerMaterialsModule({
   bot,
@@ -104,8 +110,8 @@ function registerMaterialsModule({
       return
     }
 
-    if (msg.text === messages.materials.intro.back) {
-      // TODO: Review for merge — возврат в меню смены с экрана вступления
+    if (msg.text === messages.materials.intro.back && session.step === MATERIAL_STEPS.INTRO) {
+      // TODO: Review for merge — возврат в меню смены с экрана вступления обязателен для корректной навигации
       await returnToShiftMenu({
         bot,
         chatId,
@@ -120,8 +126,10 @@ function registerMaterialsModule({
       return
     }
 
-    if (msg.text === messages.materials.intro.start) {
-      // TODO: Review for merge — запуск заполнения материалов после вступительного экрана
+    if (msg.text === messages.materials.intro.start && session.step === MATERIAL_STEPS.INTRO) {
+      // TODO: Review for merge — запуск заполнения материалов возможен только после показа экрана 6.1
+      session.step = MATERIAL_STEPS.HUB
+      materialsSessions.set(telegramId, session)
       await materialsRepo.ensureShiftMaterials(session.shiftId)
       await renderMaterialsHub({
         bot,
@@ -151,7 +159,7 @@ function registerMaterialsModule({
       return
     }
 
-    if (msg.text === messages.materials.hub.backButton) {
+    if (msg.text === messages.materials.hub.backButton && session.step === MATERIAL_STEPS.HUB) {
       session.currentMaterialKey = null
       materialsSessions.set(telegramId, session)
       await renderMaterialsHub({
@@ -167,7 +175,7 @@ function registerMaterialsModule({
 
     const currentMaterialKey = session.currentMaterialKey
 
-    if (!currentMaterialKey) {
+    if (!currentMaterialKey || session.step !== MATERIAL_STEPS.HUB) {
       return
     }
 
@@ -199,6 +207,7 @@ function registerMaterialsModule({
         shiftId,
         currentMaterialKey: null,
         hubMessageId: null,
+        step: MATERIAL_STEPS.INTRO,
       })
 
       setUserState(telegramId, USER_STATES.SHIFT_MATERIALS)
@@ -319,6 +328,7 @@ async function renderMaterialsHub({ bot, chatId, telegramId, materialsRepo, mess
     }
 
     session.currentMaterialKey = null
+    session.step = MATERIAL_STEPS.HUB
     materialsSessions.set(telegramId, session)
 
     if (withKeyboard) {
