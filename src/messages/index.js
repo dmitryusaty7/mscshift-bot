@@ -1,5 +1,6 @@
 // Все тексты бота в одном месте
 const crew = require('./crew')
+const salary = require('./salary')
 
 const messages = {
   welcomeExistingUser: (name) =>
@@ -74,6 +75,7 @@ const messages = {
     uploadFailed: 'Не удалось сохранить фото. Попробуйте ещё раз или обратитесь в поддержку.',
   },
   crew,
+  salary,
 }
 
 module.exports = messages
