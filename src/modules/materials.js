@@ -37,8 +37,35 @@ function registerMaterialsModule({
       return
     }
 
+    if (!session.shiftId) {
+      // TODO: Review for merge — shiftId обязателен для работы с материалами
+      await bot.answerCallbackQuery(query.id)
+      await bot.sendMessage(chatId, messages.materials.intro.missingShift)
+      materialsSessions.delete(telegramId)
+      setUserState(telegramId, USER_STATES.SHIFT_MENU)
+      return
+    }
+
     try {
       const [, materialKey] = action.split(':')
+
+      if (materialKey === 'confirm') {
+        // TODO: Review for merge — обработка подтверждения заполнения материалов
+        await bot.answerCallbackQuery(query.id)
+        await finishMaterialsAndReturn({
+          bot,
+          chatId,
+          telegramId,
+          session,
+          brigadiersRepo,
+          shiftsRepo,
+          materialsRepo,
+          messages,
+          logger,
+          openShiftMenu,
+        })
+        return
+      }
 
       if (materialKey && MATERIAL_KEYS[materialKey]) {
         session.currentMaterialKey = materialKey
@@ -74,6 +101,37 @@ function registerMaterialsModule({
     }
 
     if (msg.text?.startsWith('/')) {
+      return
+    }
+
+    if (msg.text === messages.materials.intro.back) {
+      // TODO: Review for merge — возврат в меню смены с экрана вступления
+      await returnToShiftMenu({
+        bot,
+        chatId,
+        telegramId,
+        session,
+        brigadiersRepo,
+        shiftsRepo,
+        messages,
+        logger,
+        openShiftMenu,
+      })
+      return
+    }
+
+    if (msg.text === messages.materials.intro.start) {
+      // TODO: Review for merge — запуск заполнения материалов после вступительного экрана
+      await materialsRepo.ensureShiftMaterials(session.shiftId)
+      await renderMaterialsHub({
+        bot,
+        chatId,
+        telegramId,
+        materialsRepo,
+        messages,
+        logger,
+        withKeyboard: true,
+      })
       return
     }
 
@@ -131,6 +189,9 @@ function registerMaterialsModule({
       const shiftId = session?.data?.shiftId
 
       if (!shiftId) {
+        // TODO: Review for merge — shiftId обязателен для работы с материалами
+        await bot.sendMessage(chatId, messages.materials.intro.missingShift)
+        setUserState(telegramId, USER_STATES.SHIFT_MENU)
         return
       }
 
@@ -144,15 +205,7 @@ function registerMaterialsModule({
 
       await materialsRepo.ensureShiftMaterials(shiftId)
 
-      await renderMaterialsHub({
-        bot,
-        chatId,
-        telegramId,
-        materialsRepo,
-        messages,
-        logger,
-        withKeyboard: true,
-      })
+      await renderMaterialsIntro({ bot, chatId, messages })
     } catch (error) {
       logger.error('Не удалось открыть блок материалов', { error: error.message })
       await bot.sendMessage(chatId, messages.systemError)
@@ -167,6 +220,14 @@ async function renderMaterialsHub({ bot, chatId, telegramId, materialsRepo, mess
   const session = materialsSessions.get(telegramId)
 
   if (!session) {
+    return
+  }
+
+  if (!session.shiftId) {
+    // TODO: Review for merge — shiftId обязателен для загрузки значений материалов
+    await bot.sendMessage(chatId, messages.materials.intro.missingShift)
+    materialsSessions.delete(telegramId)
+    setUserState(telegramId, USER_STATES.SHIFT_MENU)
     return
   }
 
@@ -225,6 +286,12 @@ async function renderMaterialsHub({ bot, chatId, telegramId, materialsRepo, mess
         {
           text: `${messages.materials.hub.tape} — ${materials.tape_used ?? 0}`,
           callback_data: 'materials:tape',
+        },
+      ],
+      [
+        {
+          text: messages.materials.hub.confirm,
+          callback_data: 'materials:confirm',
         },
       ],
     ]
@@ -341,7 +408,7 @@ async function handleMaterialInput({
     return
   }
 
-  const value = isDecimalField ? Number.parseFloat(text) : Number.parseInt(text, 10)
+  const value = isDecimalField ? Number(Number.parseFloat(text).toFixed(2)) : Number.parseInt(text, 10)
 
   if (Number.isNaN(value) || value < 0) {
     const errorMessage = isDecimalField
@@ -375,10 +442,55 @@ async function finishMaterialsAndReturn({
 }) {
   try {
     await materialsRepo.markMaterialsFilled(session.shiftId)
+    await returnToShiftMenu({
+      bot,
+      chatId,
+      telegramId,
+      session,
+      brigadiersRepo,
+      shiftsRepo,
+      messages,
+      logger,
+      openShiftMenu,
+    })
+  } catch (error) {
+    logger.error('Не удалось завершить блок материалов', { error: error.message })
+    await bot.sendMessage(chatId, messages.systemError)
+  }
+}
+
+// TODO: Review for merge — показ вступительного экрана Блока 6
+async function renderMaterialsIntro({ bot, chatId, messages }) {
+  await bot.sendMessage(chatId, `${messages.materials.intro.title}\n${messages.materials.intro.description}`, {
+    reply_markup: {
+      keyboard: [
+        [{ text: messages.materials.intro.start }],
+        [{ text: messages.materials.intro.back }],
+      ],
+      resize_keyboard: true,
+    },
+  })
+}
+
+// TODO: Review for merge — возврат в меню смены без потери навигации
+async function returnToShiftMenu({
+  bot,
+  chatId,
+  telegramId,
+  session,
+  brigadiersRepo,
+  shiftsRepo,
+  messages,
+  logger,
+  openShiftMenu,
+}) {
+  try {
+    // Русский комментарий: shiftId — ключевой параметр, без него запись в БД невозможна
+    const shiftId = session?.shiftId
 
     const brigadier = await brigadiersRepo.findByTelegramId(String(telegramId))
-    const shift = brigadier
-      ? await shiftsRepo.findActiveByIdAndBrigadier({ shiftId: session.shiftId, brigadierId: brigadier.id })
+    const shift = brigadier && shiftId
+      ? await shiftsRepo.findActiveByIdAndBrigadier({ shiftId, brigadierId: brigadier.id })
       : null
 
     materialsSessions.delete(telegramId)
@@ -386,9 +498,12 @@ async function finishMaterialsAndReturn({
 
     if (brigadier && shift && openShiftMenu) {
       await openShiftMenu({ bot, chatId, telegramId, brigadier, shift, messages, logger })
+      return
     }
+
+    await bot.sendMessage(chatId, messages.materials.intro.missingShift)
   } catch (error) {
-    logger.error('Не удалось завершить блок материалов', { error: error.message })
+    logger.error('Не удалось вернуться в меню смены из блока материалов', { error: error.message })
     await bot.sendMessage(chatId, messages.systemError)
   }
 }
