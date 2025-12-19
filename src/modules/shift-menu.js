@@ -1,3 +1,5 @@
+const { parse, isValid } = require('date-fns')
+const { ru } = require('date-fns/locale')
 const { USER_STATES, setUserState, getUserState } = require('../bot/middlewares/session')
 const { buildShiftMenuKeyboard, buildBackKeyboard } = require('../utils/shift-menu.keyboard')
 const { formatDateHuman, toPgDate } = require('../utils/time')
@@ -6,6 +8,7 @@ const { backToMainMenu } = require('../utils/back-to-main-menu')
 
 const SHIFT_STEPS = {
   WAITING_DATE: 'WAITING_DATE',
+  WAITING_DATE_CONFIRM: 'WAITING_DATE_CONFIRM',
   WAITING_SHIP: 'WAITING_SHIP',
   WAITING_HOLDS: 'WAITING_HOLDS',
   MENU_READY: 'MENU_READY',
@@ -22,6 +25,7 @@ function registerShiftMenuModule({
   messages,
   logger,
   returnToMainPanel,
+  openCrewScene,
 }) {
   bot.onText(/\/shift(?:_menu)?/, async (msg) => {
     const chatId = msg.chat.id
@@ -48,6 +52,12 @@ function registerShiftMenuModule({
     const chatId = msg.chat.id
 
     if (!telegramId || !/^\d+$/.test(String(telegramId))) {
+      return
+    }
+
+    const state = getUserState(telegramId)
+
+    if (![USER_STATES.SHIFT_CREATION, USER_STATES.SHIFT_MENU].includes(state)) {
       return
     }
 
@@ -78,6 +88,9 @@ function registerShiftMenuModule({
     switch (session.step) {
       case SHIFT_STEPS.WAITING_DATE:
         await handleDateInput({ bot, chatId, telegramId, text: msg.text, messages })
+        break
+      case SHIFT_STEPS.WAITING_DATE_CONFIRM:
+        await handleDateConfirmInput({ bot, chatId, telegramId, text: msg.text, messages })
         break
       case SHIFT_STEPS.WAITING_SHIP:
         await handleShipInput({
@@ -122,6 +135,13 @@ function registerShiftMenuModule({
 
     if (action && action.startsWith('shift:')) {
       await bot.answerCallbackQuery(query.id, { text: messages.shiftMenu.sectionRedirect })
+
+      if (action === 'shift:crew' && openCrewScene) {
+        // TODO: Code Review for mergeability
+        await openCrewScene({ bot, chatId, telegramId, session })
+        return
+      }
+
       // TODO: переключать пользователя в нужный блок и обновлять статусы после завершения блока
       return
     }
@@ -226,13 +246,69 @@ async function handleDateInput({ bot, chatId, telegramId, text, messages }) {
     return
   }
 
-  session.data.date = parsedDate
-  session.step = SHIFT_STEPS.WAITING_SHIP
+  session.data.dateCandidate = parsedDate
+  session.step = SHIFT_STEPS.WAITING_DATE_CONFIRM
   shiftSessions.set(telegramId, session)
 
-  await bot.sendMessage(chatId, messages.shiftMenu.askShip, {
+  await bot.sendMessage(chatId, messages.shiftMenu.confirmDate(formatDateHuman(parsedDate)), {
+    parse_mode: 'HTML',
     reply_markup: {
-      keyboard: buildKeyboardWithBack([], messages.navigation.back),
+      keyboard: [
+        [{ text: messages.shiftMenu.confirmDateYes }],
+        [{ text: messages.shiftMenu.confirmDateEdit }],
+        [{ text: messages.navigation.back }],
+      ],
+      resize_keyboard: true,
+    },
+  })
+}
+
+// Русский комментарий: подтверждение распознанной даты
+async function handleDateConfirmInput({ bot, chatId, telegramId, text, messages }) {
+  const session = shiftSessions.get(telegramId)
+
+  if (!session || !session.data?.dateCandidate) {
+    return
+  }
+
+  if (text === messages.shiftMenu.confirmDateYes) {
+    session.data.date = session.data.dateCandidate
+    session.data.dateCandidate = null
+    session.step = SHIFT_STEPS.WAITING_SHIP
+    shiftSessions.set(telegramId, session)
+
+    await bot.sendMessage(chatId, messages.shiftMenu.askShip, {
+      reply_markup: {
+        keyboard: buildKeyboardWithBack([], messages.navigation.back),
+        resize_keyboard: true,
+      },
+    })
+    return
+  }
+
+  if (text === messages.shiftMenu.confirmDateEdit) {
+    session.data.dateCandidate = null
+    session.step = SHIFT_STEPS.WAITING_DATE
+    shiftSessions.set(telegramId, session)
+
+    await bot.sendMessage(chatId, messages.shiftMenu.askDate, {
+      reply_markup: {
+        keyboard: buildKeyboardWithBack([[{ text: messages.shiftMenu.todayButton }]], messages.navigation.back),
+        resize_keyboard: true,
+        one_time_keyboard: false,
+      },
+    })
+    return
+  }
+
+  await bot.sendMessage(chatId, messages.shiftMenu.confirmDate(formatDateHuman(session.data.dateCandidate)), {
+    parse_mode: 'HTML',
+    reply_markup: {
+      keyboard: [
+        [{ text: messages.shiftMenu.confirmDateYes }],
+        [{ text: messages.shiftMenu.confirmDateEdit }],
+        [{ text: messages.navigation.back }],
+      ],
       resize_keyboard: true,
     },
   })
@@ -373,29 +449,23 @@ function parseShiftDate(text, todayButton) {
     return today
   }
 
-  const match = text.match(/^(\d{2})\.(\d{2})\.(\d{4})$/)
+  const formats = ['d MMMM yyyy', 'd MMM yy', 'd MMMM', 'd.M.yyyy', 'd.M.yy', 'dd.MM.yyyy']
+  let parsed = null
 
-  if (!match) {
+  for (const fmt of formats) {
+    const candidate = parse(text, fmt, new Date(), { locale: ru })
+    if (candidate && isValid(candidate)) {
+      parsed = candidate
+      break
+    }
+  }
+
+  if (!parsed) {
     return null
   }
 
-  const [, dayStr, monthStr, yearStr] = match
-  const day = Number.parseInt(dayStr, 10)
-  const month = Number.parseInt(monthStr, 10) - 1
-  const year = Number.parseInt(yearStr, 10)
-
-  const date = new Date(Date.UTC(year, month, day))
-
-  if (
-    Number.isNaN(date.getTime()) ||
-    date.getUTCDate() !== day ||
-    date.getUTCMonth() !== month ||
-    date.getUTCFullYear() !== year
-  ) {
-    return null
-  }
-
-  return date
+  const normalized = new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()))
+  return normalized
 }
 
 // Отрисовка меню смены с inline-клавиатурой и кнопкой возврата
