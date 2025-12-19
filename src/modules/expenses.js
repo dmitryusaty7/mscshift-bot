@@ -203,22 +203,22 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
     }
 
     if (mode === EXPENSES_MODES.INPUT_FOOD) {
-      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, column: 'food_amount', messages, logger, expensesRepo })
+      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, kind: 'food', messages, logger, expensesRepo })
       return
     }
 
     if (mode === EXPENSES_MODES.INPUT_MATERIALS) {
-      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, column: 'materials_amount', messages, logger, expensesRepo })
+      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, kind: 'materials', messages, logger, expensesRepo })
       return
     }
 
     if (mode === EXPENSES_MODES.INPUT_TAXI) {
-      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, column: 'taxi_amount', messages, logger, expensesRepo })
+      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, kind: 'taxi', messages, logger, expensesRepo })
       return
     }
 
     if (mode === EXPENSES_MODES.INPUT_OTHER_AMOUNT) {
-      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, column: 'other_amount', messages, logger, expensesRepo, expectComment: true })
+      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, kind: 'other', messages, logger, expensesRepo, expectComment: true })
       return
     }
 
@@ -226,7 +226,7 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
       const parsed = parseExpenseValue(msg.text)
       if (parsed === null) {
         // Русский комментарий: если сумма уже сохранена и прилетает текст, принимаем его как комментарий
-        await expensesRepo.updateOtherComment({ shiftId, comment: msg.text })
+        await expensesRepo.saveOtherComment({ shiftId, comment: msg.text })
         updateSessionMode({ chatId, shiftId, mode: EXPENSES_MODES.HUB })
         await renderExpensesHub({ ctx, shiftId, messages, logger, expensesRepo, withKeyboard: true })
         return
@@ -377,8 +377,8 @@ async function renderExpenseInput({ ctx, mode, messages }) {
   })
 }
 
-// TODO: Review for merge — обработка ввода суммы
-async function processExpenseInput({ ctx, chatId, shiftId, text, column, messages, logger, expensesRepo, expectComment = false }) {
+// TODO: Review for merge — обработка ввода суммы расходов по белому списку колонок
+async function processExpenseInput({ ctx, chatId, shiftId, text, kind, messages, logger, expensesRepo, expectComment = false }) {
   const parsed = parseExpenseValue(text)
 
   if (parsed === null) {
@@ -386,8 +386,19 @@ async function processExpenseInput({ ctx, chatId, shiftId, text, column, message
     return
   }
 
+  const columnForLog = {
+    food: 'food_amount',
+    materials: 'materials_amount',
+    taxi: 'taxi_amount',
+    other: 'other_amount',
+  }[kind]
+
+  const amountSql = columnForLog
+    ? `UPDATE public.shift_expenses SET ${columnForLog} = $2::numeric; UPDATE public.shift_expenses SET total_expenses = COALESCE(food_amount,0) + COALESCE(materials_amount,0) + COALESCE(taxi_amount,0) + COALESCE(other_amount,0);`
+    : null
+
   try {
-    await expensesRepo.updateExpenseAmount({ shiftId, column, value: parsed })
+    await expensesRepo.saveExpenseAmount({ shiftId, kind, amountRub: parsed })
     await expensesRepo.updateExpensesFilled(shiftId)
 
     const nextMode = expectComment ? EXPENSES_MODES.AWAIT_OTHER_COMMENT : EXPENSES_MODES.HUB
@@ -395,7 +406,15 @@ async function processExpenseInput({ ctx, chatId, shiftId, text, column, message
 
     await renderExpensesHub({ ctx, shiftId, messages, logger, expensesRepo, withKeyboard: true })
   } catch (error) {
-    logger.error('Не удалось сохранить сумму расходов', { error: error.message })
+    const session = findSessionByChat(chatId)
+
+    // TODO: Review for merge — логируем детали запроса без утечки текста ввода
+    logger.error('Не удалось сохранить сумму расходов', {
+      ошибка: String(error?.message || error),
+      shiftId,
+      режим: session?.mode,
+      sql: amountSql,
+    })
     await ctx.reply(messages.systemError)
   }
 }

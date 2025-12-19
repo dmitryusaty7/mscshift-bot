@@ -5,8 +5,8 @@ function createExpensesRepo(pool) {
   return {
     ensureShiftExpensesRow,
     getShiftExpenses,
-    updateExpenseAmount,
-    updateOtherComment,
+    saveExpenseAmount,
+    saveOtherComment,
     updateExpensesFilled,
     markExpensesFilledOnExit,
   }
@@ -47,80 +47,68 @@ function createExpensesRepo(pool) {
     return rows[0] || null
   }
 
-  // TODO: Review for merge — обновляем сумму выбранной категории и пересчитываем итог
-  async function updateExpenseAmount({ shiftId, column, value }) {
-    const allowed = new Set(['food_amount', 'materials_amount', 'taxi_amount', 'other_amount'])
+  // TODO: Review for merge
+  // Белый список колонок расходов (защита от SQL-инъекций)
+  const EXPENSE_COLUMNS = {
+    food: 'food_amount',
+    materials: 'materials_amount',
+    taxi: 'taxi_amount',
+    other: 'other_amount',
+  }
 
-    if (!allowed.has(column)) {
+  // TODO: Review for merge — обновляем сумму выбранной категории без смешивания с текстовыми полями
+  async function saveExpenseAmount({ shiftId, kind, amountRub }) {
+    const column = EXPENSE_COLUMNS[kind]
+
+    if (!column) {
       throw new Error('Недопустимое поле расходов для обновления')
+    }
+
+    const amount = Number.parseInt(amountRub, 10)
+
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new Error('Сумма расходов должна быть неотрицательным числом')
     }
 
     await ensureShiftExpensesRow(shiftId)
 
-    const queryMap = {
-      food_amount: `
+    // TODO: Review for merge — сперва сохраняем сумму в numeric(12,2), затем отдельным запросом пересчитываем итог
+    await pool.query(
+      `
         -- TODO: Review for merge
-        -- Сохраняем питание и пересчитываем итог
+        -- Сохраняем сумму расхода в нужную колонку
         UPDATE public.shift_expenses
-        SET food_amount = $2,
-            total_expenses = COALESCE($2,0) + COALESCE(materials_amount,0) + COALESCE(taxi_amount,0) + COALESCE(other_amount,0),
+        SET ${column} = $2::numeric,
             updated_at = now()
         WHERE shift_id = $1;
       `,
-      materials_amount: `
+      [shiftId, amount]
+    )
+
+    await pool.query(
+      `
         -- TODO: Review for merge
-        -- Сохраняем расходники и пересчитываем итог
+        -- Пересчитываем общий итог без использования текстовых полей
         UPDATE public.shift_expenses
-        SET materials_amount = $2,
-            total_expenses = COALESCE(food_amount,0) + COALESCE($2,0) + COALESCE(taxi_amount,0) + COALESCE(other_amount,0),
+        SET total_expenses = COALESCE(food_amount,0) + COALESCE(materials_amount,0) + COALESCE(taxi_amount,0) + COALESCE(other_amount,0),
             updated_at = now()
         WHERE shift_id = $1;
       `,
-      taxi_amount: `
-        -- TODO: Review for merge
-        -- Сохраняем такси и пересчитываем итог
-        UPDATE public.shift_expenses
-        SET taxi_amount = $2,
-            total_expenses = COALESCE(food_amount,0) + COALESCE(materials_amount,0) + COALESCE($2,0) + COALESCE(other_amount,0),
-            updated_at = now()
-        WHERE shift_id = $1;
-      `,
-      other_amount: `
-        -- TODO: Review for merge
-        -- Сохраняем прочее и пересчитываем итог
-        UPDATE public.shift_expenses
-        SET other_amount = $2,
-            total_expenses = COALESCE(food_amount,0) + COALESCE(materials_amount,0) + COALESCE(taxi_amount,0) + COALESCE($2,0),
-            updated_at = now()
-        WHERE shift_id = $1;
-      `,
-    }
-
-    const query = queryMap[column]
-
-    if (!query) {
-      throw new Error('Нет SQL для указанной колонки расходов')
-    }
-
-    const res = await pool.query(query, [shiftId, value])
-
-    if (res.rowCount === 0) {
-      // Русский комментарий: при отсутствующей строке повторяем после ensure
-      await ensureShiftExpensesRow(shiftId)
-      await pool.query(query, [shiftId, value])
-    }
+      [shiftId]
+    )
   }
 
-  // TODO: Review for merge — сохраняем комментарий к прочим расходам
-  async function updateOtherComment({ shiftId, comment }) {
+  // TODO: Review for merge — сохраняем комментарий к прочим расходам отдельно от числовых сумм
+  // Русский комментарий: текст нельзя смешивать с числовыми параметрами, иначе Postgres выдаёт ошибку типов
+  async function saveOtherComment({ shiftId, comment }) {
     await ensureShiftExpensesRow(shiftId)
 
     await pool.query(
       `
         -- TODO: Review for merge
-        -- Сохраняем комментарий к «Прочее»
+        -- Сохраняем комментарий к «Прочее» отдельно (text)
         UPDATE public.shift_expenses
-        SET other_comment = $2,
+        SET other_comment = $2::text,
             updated_at = now()
         WHERE shift_id = $1;
       `,
