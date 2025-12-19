@@ -1,3 +1,12 @@
+// TODO: Review for merge — белый список должен быть объявлен до использования, иначе получаем TDZ
+// Русский комментарий: при обращении к const до инициализации возникает TDZ, поэтому кладём его в начало модуля
+const EXPENSE_COLUMNS = {
+  food: 'food_amount',
+  materials: 'materials_amount',
+  taxi: 'taxi_amount',
+  other: 'other_amount',
+}
+
 // TODO: Review for merge — репозиторий расходов смены
 // Русский комментарий: все операции работают через БД, чтобы избежать несогласованности в клиентах
 function createExpensesRepo(pool) {
@@ -47,15 +56,6 @@ function createExpensesRepo(pool) {
     return rows[0] || null
   }
 
-  // TODO: Review for merge
-  // Белый список колонок расходов (защита от SQL-инъекций)
-  const EXPENSE_COLUMNS = {
-    food: 'food_amount',
-    materials: 'materials_amount',
-    taxi: 'taxi_amount',
-    other: 'other_amount',
-  }
-
   // TODO: Review for merge — обновляем сумму выбранной категории без смешивания с текстовыми полями
   async function saveExpenseAmount({ shiftId, kind, amountRub }) {
     const column = EXPENSE_COLUMNS[kind]
@@ -72,30 +72,18 @@ function createExpensesRepo(pool) {
 
     await ensureShiftExpensesRow(shiftId)
 
-    // TODO: Review for merge — сперва сохраняем сумму в numeric(12,2), затем отдельным запросом пересчитываем итог
-    await pool.query(
-      `
-        -- TODO: Review for merge
-        -- Сохраняем сумму расхода в нужную колонку
-        UPDATE public.shift_expenses
-        SET ${column} = $2::numeric,
-            updated_at = now()
-        WHERE shift_id = $1;
-      `,
-      [shiftId, amount]
-    )
+    // TODO: Review for merge — обновляем сумму и total_expenses одним запросом без мультистейтмента
+    // Русский комментарий: node-postgres по умолчанию не исполняет несколько операторов; используем один UPDATE с COALESCE и обязательным WHERE
+    const sql = `
+      UPDATE public.shift_expenses
+      SET ${column} = $2::numeric,
+          total_expenses = COALESCE(food_amount,0) + COALESCE(materials_amount,0) + COALESCE(taxi_amount,0) + COALESCE(other_amount,0),
+          updated_at = now()
+      WHERE shift_id = $1
+      RETURNING food_amount, materials_amount, taxi_amount, other_amount, total_expenses;
+    `
 
-    await pool.query(
-      `
-        -- TODO: Review for merge
-        -- Пересчитываем общий итог без использования текстовых полей
-        UPDATE public.shift_expenses
-        SET total_expenses = COALESCE(food_amount,0) + COALESCE(materials_amount,0) + COALESCE(taxi_amount,0) + COALESCE(other_amount,0),
-            updated_at = now()
-        WHERE shift_id = $1;
-      `,
-      [shiftId]
-    )
+    await pool.query(sql, [shiftId, amount])
   }
 
   // TODO: Review for merge — сохраняем комментарий к прочим расходам отдельно от числовых сумм

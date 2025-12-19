@@ -393,8 +393,9 @@ async function processExpenseInput({ ctx, chatId, shiftId, text, kind, messages,
     other: 'other_amount',
   }[kind]
 
+  // TODO: Review for merge — логируем только безопасный шаблон UPDATE с WHERE, без мультистейтмента
   const amountSql = columnForLog
-    ? `UPDATE public.shift_expenses SET ${columnForLog} = $2::numeric; UPDATE public.shift_expenses SET total_expenses = COALESCE(food_amount,0) + COALESCE(materials_amount,0) + COALESCE(taxi_amount,0) + COALESCE(other_amount,0);`
+    ? `UPDATE public.shift_expenses SET ${columnForLog} = $2::numeric, total_expenses = COALESCE(food_amount,0) + COALESCE(materials_amount,0) + COALESCE(taxi_amount,0) + COALESCE(other_amount,0), updated_at = now() WHERE shift_id = $1 RETURNING ...`
     : null
 
   try {
