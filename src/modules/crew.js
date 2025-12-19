@@ -4,9 +4,18 @@ const { formatDateHuman } = require('../utils/time')
 const CREW_STEPS = {
   INTRO: 'INTRO',
   HUB: 'HUB',
-  DEPUTY_INPUT: 'DEPUTY_INPUT',
-  DRIVER_INPUT: 'DRIVER_INPUT',
-  WORKER_INPUT: 'WORKER_INPUT',
+  DEPUTY_SURNAME: 'DEPUTY_SURNAME',
+  DEPUTY_NAME: 'DEPUTY_NAME',
+  DEPUTY_PATRONYMIC: 'DEPUTY_PATRONYMIC',
+  DEPUTY_CONFIRM: 'DEPUTY_CONFIRM',
+  DRIVER_SURNAME: 'DRIVER_SURNAME',
+  DRIVER_NAME: 'DRIVER_NAME',
+  DRIVER_PATRONYMIC: 'DRIVER_PATRONYMIC',
+  DRIVER_CONFIRM: 'DRIVER_CONFIRM',
+  WORKER_SURNAME: 'WORKER_SURNAME',
+  WORKER_NAME: 'WORKER_NAME',
+  WORKER_PATRONYMIC: 'WORKER_PATRONYMIC',
+  WORKER_CONFIRM: 'WORKER_CONFIRM',
 }
 
 const crewSessions = new Map()
@@ -32,25 +41,19 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
     try {
       if (action === 'crew:deputy') {
         await bot.answerCallbackQuery(query.id)
-        await askDeputyInput({ bot, chatId, telegramId, session, messages })
+        await startFioFlow({ bot, chatId, telegramId, session, role: 'deputy', messages })
         return
       }
 
       if (action === 'crew:driver') {
         await bot.answerCallbackQuery(query.id)
-        await askDriverInput({ bot, chatId, telegramId, session, messages })
+        await startFioFlow({ bot, chatId, telegramId, session, role: 'driver', messages })
         return
       }
 
       if (action === 'crew:workers') {
         await bot.answerCallbackQuery(query.id)
-        await askWorkerInput({ bot, chatId, telegramId, session, messages })
-        return
-      }
-
-      if (action === 'crew:refresh') {
-        await bot.answerCallbackQuery(query.id)
-        await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
+        await startFioFlow({ bot, chatId, telegramId, session, role: 'worker', messages })
         return
       }
 
@@ -78,6 +81,20 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
         if (Number.isInteger(workerId)) {
           await removeWorkerHandler({ bot, chatId, telegramId, session, workerId, crewRepo, messages, logger })
         }
+        return
+      }
+
+      if (action.startsWith('crew:input:confirm:')) {
+        await bot.answerCallbackQuery(query.id)
+        const role = action.split(':')[3]
+        await saveCurrentInput({ bot, chatId, telegramId, session, role, crewRepo, messages, logger })
+        return
+      }
+
+      if (action.startsWith('crew:input:edit:')) {
+        await bot.answerCallbackQuery(query.id)
+        const role = action.split(':')[3]
+        await restartRoleInput({ bot, chatId, telegramId, session, role, messages })
         return
       }
 
@@ -128,8 +145,8 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
       return
     }
 
-    if (msg.text === messages.navigation.back && session.step !== CREW_STEPS.HUB) {
-      await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
+    if (msg.text === messages.navigation.back) {
+      await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger, withKeyboard: true })
       return
     }
 
@@ -137,14 +154,47 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
       case CREW_STEPS.INTRO:
         await handleIntroNavigation({ bot, chatId, telegramId, text: msg.text, session, crewRepo, messages, logger })
         break
-      case CREW_STEPS.DEPUTY_INPUT:
-        await handleDeputyInput({ bot, chatId, telegramId, text: msg.text, session, crewRepo, messages, logger })
+      case CREW_STEPS.DEPUTY_SURNAME:
+      case CREW_STEPS.DRIVER_SURNAME:
+      case CREW_STEPS.WORKER_SURNAME:
+        await handleSurnameInput({
+          bot,
+          chatId,
+          telegramId,
+          text: msg.text,
+          session,
+          messages,
+          logger,
+          crewRepo,
+        })
         break
-      case CREW_STEPS.DRIVER_INPUT:
-        await handleDriverInput({ bot, chatId, telegramId, text: msg.text, session, crewRepo, messages, logger })
+      case CREW_STEPS.DEPUTY_NAME:
+      case CREW_STEPS.DRIVER_NAME:
+      case CREW_STEPS.WORKER_NAME:
+        await handleNameInput({
+          bot,
+          chatId,
+          telegramId,
+          text: msg.text,
+          session,
+          messages,
+          logger,
+          crewRepo,
+        })
         break
-      case CREW_STEPS.WORKER_INPUT:
-        await handleWorkerInput({ bot, chatId, telegramId, text: msg.text, session, crewRepo, messages, logger })
+      case CREW_STEPS.DEPUTY_PATRONYMIC:
+      case CREW_STEPS.DRIVER_PATRONYMIC:
+      case CREW_STEPS.WORKER_PATRONYMIC:
+        await handlePatronymicInput({
+          bot,
+          chatId,
+          telegramId,
+          text: msg.text,
+          session,
+          messages,
+          logger,
+          crewRepo,
+        })
         break
       case CREW_STEPS.HUB:
       default:
@@ -171,6 +221,7 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
           shipName: session?.data?.shipName,
           date: session?.data?.date,
           hubMessageId: null,
+          currentInput: null,
         },
       })
 
@@ -195,7 +246,7 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
 }
 
 // Русский комментарий: отображаем хаб состояния состава
-async function renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger }) {
+async function renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger, withKeyboard = false }) {
   try {
     const crew = await crewRepo.getCrewByShift(session.data.shiftId)
     const ready = Boolean(crew.driver && crew.workers.length)
@@ -204,9 +255,9 @@ async function renderHub({ bot, chatId, telegramId, session, crewRepo, messages,
       date: session.data.date ? formatDateHuman(session.data.date) : null,
     })
     const body = messages.crew.hubBody({
-      deputy: crew.deputy?.fullName || null,
-      driver: crew.driver?.fullName || null,
-      workers: crew.workers.map((worker) => worker.fullName),
+      deputy: formatShortName(crew.deputy?.fullName),
+      driver: formatShortName(crew.driver?.fullName),
+      workers: crew.workers.map((worker) => formatShortName(worker.fullName)),
       ready,
     })
     const keyboard = buildHubKeyboard({ crew, ready, messages })
@@ -232,26 +283,118 @@ async function renderHub({ bot, chatId, telegramId, session, crewRepo, messages,
       crewSessions.set(telegramId, {
         ...session,
         step: CREW_STEPS.HUB,
-        data: { ...session.data, hubMessageId: hubMessage.message_id },
+        data: { ...session.data, hubMessageId: hubMessage.message_id, currentInput: null },
       })
-      return
     }
 
     crewSessions.set(telegramId, {
       ...session,
       step: CREW_STEPS.HUB,
-      data: { ...session.data },
+      data: { ...session.data, currentInput: null },
     })
+
+    if (withKeyboard) {
+      await bot.sendMessage(chatId, messages.crew.navigationHint, {
+        reply_markup: {
+          keyboard: [
+            [{ text: messages.navigation.back }],
+            [{ text: messages.crew.backToShiftMenuButton }],
+          ],
+          resize_keyboard: true,
+        },
+      })
+    }
   } catch (error) {
     logger?.error('Ошибка при отрисовке хаба состава', { error: error.message })
     await bot.sendMessage(chatId, messages.crew.unexpectedError)
   }
 }
 
-// Русский комментарий: запрос ФИО заместителя
-async function askDeputyInput({ bot, chatId, telegramId, session, messages }) {
-  crewSessions.set(telegramId, { ...session, step: CREW_STEPS.DEPUTY_INPUT })
-  await bot.sendMessage(chatId, messages.crew.deputy.ask, {
+// Русский комментарий: запуск пошагового ввода ФИО для роли
+async function startFioFlow({ bot, chatId, telegramId, session, role, messages }) {
+  const nextStep = {
+    deputy: CREW_STEPS.DEPUTY_SURNAME,
+    driver: CREW_STEPS.DRIVER_SURNAME,
+    worker: CREW_STEPS.WORKER_SURNAME,
+  }[role]
+
+  crewSessions.set(telegramId, {
+    ...session,
+    step: nextStep,
+    data: {
+      ...session.data,
+      currentInput: {
+        role,
+        surname: '',
+        name: '',
+        patronymic: '',
+      },
+    },
+  })
+
+  await askSurname({ bot, chatId, telegramId, role, messages })
+}
+
+// Русский комментарий: обработка выбора на интро-экране
+async function handleIntroNavigation({ bot, chatId, telegramId, text, session, crewRepo, messages, logger }) {
+  if (text === messages.crew.startButton) {
+    await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger, withKeyboard: true })
+    return
+  }
+
+  if (text === messages.crew.backToShiftMenuButton) {
+    await bot.sendMessage(chatId, messages.crew.returnToMenu)
+  }
+}
+
+// Русский комментарий: запрос фамилии для роли
+async function askSurname({ bot, chatId, telegramId, role, messages }) {
+  const promptMap = {
+    deputy: messages.crew.deputy.askSurname,
+    driver: messages.crew.driver.askSurname,
+    worker: messages.crew.workers.askSurname,
+  }
+
+  await bot.sendMessage(chatId, promptMap[role], {
+    reply_markup: {
+      keyboard: [
+        role === 'deputy' ? [{ text: messages.crew.deputy.skipButton }] : null,
+        [{ text: messages.navigation.back }],
+        [{ text: messages.crew.backToShiftMenuButton }],
+      ].filter(Boolean),
+      resize_keyboard: true,
+    },
+  })
+}
+
+// Русский комментарий: запрос имени для роли
+async function askName({ bot, chatId, role, messages }) {
+  const promptMap = {
+    deputy: messages.crew.deputy.askName,
+    driver: messages.crew.driver.askName,
+    worker: messages.crew.workers.askName,
+  }
+
+  await bot.sendMessage(chatId, promptMap[role], {
+    reply_markup: {
+      keyboard: [
+        [{ text: messages.navigation.back }],
+        [{ text: messages.crew.backToShiftMenuButton }],
+      ],
+      resize_keyboard: true,
+    },
+  })
+}
+
+// Русский комментарий: запрос отчества для роли
+async function askPatronymic({ bot, chatId, role, messages }) {
+  const promptMap = {
+    deputy: messages.crew.deputy.askPatronymic,
+    driver: messages.crew.driver.askPatronymic,
+    worker: messages.crew.workers.askPatronymic,
+  }
+
+  await bot.sendMessage(chatId, promptMap[role], {
     reply_markup: {
       keyboard: [
         [{ text: messages.crew.deputy.skipButton }],
@@ -263,130 +406,227 @@ async function askDeputyInput({ bot, chatId, telegramId, session, messages }) {
   })
 }
 
-// Русский комментарий: запрос ФИО водителя
-async function askDriverInput({ bot, chatId, telegramId, session, messages }) {
-  crewSessions.set(telegramId, { ...session, step: CREW_STEPS.DRIVER_INPUT })
-  await bot.sendMessage(chatId, messages.crew.driver.ask, {
-    reply_markup: {
-      keyboard: [[{ text: messages.navigation.back }], [{ text: messages.crew.backToShiftMenuButton }]],
-      resize_keyboard: true,
-    },
-  })
-}
+// Русский комментарий: обработка ввода фамилии
+async function handleSurnameInput({ bot, chatId, telegramId, text, session, messages, logger, crewRepo }) {
+  const role = session.data.currentInput?.role
 
-// Русский комментарий: запрос ФИО рабочего
-async function askWorkerInput({ bot, chatId, telegramId, session, messages }) {
-  crewSessions.set(telegramId, { ...session, step: CREW_STEPS.WORKER_INPUT })
-  await bot.sendMessage(chatId, messages.crew.workers.ask, {
-    reply_markup: {
-      keyboard: [[{ text: messages.navigation.back }], [{ text: messages.crew.backToShiftMenuButton }]],
-      resize_keyboard: true,
-    },
-  })
-}
-
-// Русский комментарий: обработка выбора на интро-экране
-async function handleIntroNavigation({ bot, chatId, telegramId, text, session, crewRepo, messages, logger }) {
-  if (text === messages.crew.startButton) {
+  if (!role) {
     await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
     return
   }
 
-  if (text === messages.crew.backToShiftMenuButton) {
-    await bot.sendMessage(chatId, messages.crew.returnToMenu)
-  }
-}
-
-// Русский комментарий: обработка ввода заместителя
-async function handleDeputyInput({ bot, chatId, telegramId, text, session, crewRepo, messages, logger }) {
-  if (text === messages.crew.deputy.skipButton) {
+  if (role === 'deputy' && text === messages.crew.deputy.skipButton) {
     await clearDeputyHandler({ bot, chatId, telegramId, session, messages, crewRepo, logger })
     return
   }
 
-  if (!isValidFullName(text)) {
+  if (!isValidNamePart(text)) {
     await bot.sendMessage(chatId, messages.crew.validationError)
+    await askSurname({ bot, chatId, telegramId, role, messages })
     return
   }
 
-  try {
-    const existingCrew = await crewRepo.getCrewByShift(session.data.shiftId)
+  const updatedSession = {
+    ...session,
+    step: {
+      deputy: CREW_STEPS.DEPUTY_NAME,
+      driver: CREW_STEPS.DRIVER_NAME,
+      worker: CREW_STEPS.WORKER_NAME,
+    }[role],
+    data: {
+      ...session.data,
+      currentInput: {
+        ...session.data.currentInput,
+        role,
+        surname: normalizeName(text),
+      },
+    },
+  }
 
-    if (!existingCrew.driver) {
-      await bot.sendMessage(chatId, messages.crew.deputy.driverMissing)
-      await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
-      return
-    }
+  crewSessions.set(telegramId, updatedSession)
+  await askName({ bot, chatId, role, messages })
+}
 
-    const worker = await crewRepo.findOrCreateWorker(normalizeName(text))
-    const updated = await crewRepo.updateDeputy({ shiftId: session.data.shiftId, deputyWorkerId: worker.id })
+// Русский комментарий: обработка ввода имени
+async function handleNameInput({ bot, chatId, telegramId, text, session, messages, crewRepo, logger }) {
+  const role = session.data.currentInput?.role
 
-    if (!updated) {
-      await bot.sendMessage(chatId, messages.crew.deputy.driverMissing)
-      await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
-      return
-    }
-
-    await crewRepo.recalcCrewFilled(session.data.shiftId)
-    await bot.sendMessage(chatId, messages.crew.deputy.saved(normalizeName(text)))
+  if (!role) {
     await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
+    return
+  }
+
+  if (!isValidNamePart(text)) {
+    await bot.sendMessage(chatId, messages.crew.validationError)
+    await askName({ bot, chatId, role, messages })
+    return
+  }
+
+  const updatedSession = {
+    ...session,
+    step: {
+      deputy: CREW_STEPS.DEPUTY_PATRONYMIC,
+      driver: CREW_STEPS.DRIVER_PATRONYMIC,
+      worker: CREW_STEPS.WORKER_PATRONYMIC,
+    }[role],
+    data: {
+      ...session.data,
+      currentInput: {
+        ...session.data.currentInput,
+        name: normalizeName(text),
+      },
+    },
+  }
+
+  crewSessions.set(telegramId, updatedSession)
+  await askPatronymic({ bot, chatId, role, messages })
+}
+
+// Русский комментарий: обработка ввода отчества или пропуска
+async function handlePatronymicInput({ bot, chatId, telegramId, text, session, messages, logger, crewRepo }) {
+  const role = session.data.currentInput?.role
+
+  if (!role) {
+    await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
+    return
+  }
+
+  const skip = text === messages.crew.deputy.skipButton
+
+  if (!skip && text && !isValidNamePart(text)) {
+    await bot.sendMessage(chatId, messages.crew.validationError)
+    await askPatronymic({ bot, chatId, role, messages })
+    return
+  }
+
+  const patronymic = skip ? '' : normalizeName(text)
+  const fio = formatFio({
+    surname: session.data.currentInput?.surname,
+    name: session.data.currentInput?.name,
+    patronymic,
+  })
+
+  const updatedSession = {
+    ...session,
+    step: {
+      deputy: CREW_STEPS.DEPUTY_CONFIRM,
+      driver: CREW_STEPS.DRIVER_CONFIRM,
+      worker: CREW_STEPS.WORKER_CONFIRM,
+    }[role],
+    data: {
+      ...session.data,
+      currentInput: {
+        ...session.data.currentInput,
+        patronymic,
+        formatted: fio,
+      },
+    },
+  }
+
+  crewSessions.set(telegramId, updatedSession)
+
+  await bot.sendMessage(chatId, messages.crew.inputPreview(fio), {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [[
+        { text: messages.crew.buttons.inputConfirm, callback_data: `crew:input:confirm:${role}` },
+        { text: messages.crew.buttons.inputEdit, callback_data: `crew:input:edit:${role}` },
+      ]],
+    },
+  })
+}
+
+// Русский комментарий: повторный запуск шага для роли
+async function restartRoleInput({ bot, chatId, telegramId, session, role, messages }) {
+  const updatedSession = {
+    ...session,
+    step: {
+      deputy: CREW_STEPS.DEPUTY_SURNAME,
+      driver: CREW_STEPS.DRIVER_SURNAME,
+      worker: CREW_STEPS.WORKER_SURNAME,
+    }[role],
+    data: {
+      ...session.data,
+      currentInput: {
+        role,
+        surname: '',
+        name: '',
+        patronymic: '',
+      },
+    },
+  }
+
+  crewSessions.set(telegramId, updatedSession)
+  await askSurname({ bot, chatId, telegramId, role, messages })
+}
+
+// Русский комментарий: сохранение введённого ФИО в БД в зависимости от роли
+async function saveCurrentInput({ bot, chatId, telegramId, session, role, crewRepo, messages, logger }) {
+  const input = session.data.currentInput
+
+  if (!input || input.role !== role) {
+    await bot.sendMessage(chatId, messages.crew.unexpectedError)
+    return
+  }
+
+  const fio = input.formatted || formatFio(input)
+
+  try {
+    if (role === 'driver') {
+      const crew = await crewRepo.getCrewByShift(session.data.shiftId)
+      const driver = await crewRepo.findOrCreateDriver(fio)
+
+      await crewRepo.upsertDriver({
+        shiftId: session.data.shiftId,
+        driverId: driver.id,
+        deputyWorkerId: crew.deputy?.id ?? null,
+      })
+
+      await crewRepo.recalcCrewFilled(session.data.shiftId)
+      await bot.sendMessage(chatId, messages.crew.driver.saved(fio))
+    } else if (role === 'deputy') {
+      const existingCrew = await crewRepo.getCrewByShift(session.data.shiftId)
+
+      if (!existingCrew.driver) {
+        await bot.sendMessage(chatId, messages.crew.deputy.driverMissing)
+        await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
+        return
+      }
+
+      const worker = await crewRepo.findOrCreateWorker(fio)
+      await crewRepo.updateDeputy({ shiftId: session.data.shiftId, deputyWorkerId: worker.id })
+      await crewRepo.recalcCrewFilled(session.data.shiftId)
+      await bot.sendMessage(chatId, messages.crew.deputy.saved(fio))
+    } else if (role === 'worker') {
+      const worker = await crewRepo.findOrCreateWorker(fio)
+      const added = await crewRepo.addWorkerToShift({ shiftId: session.data.shiftId, workerId: worker.id })
+
+      if (!added) {
+        await bot.sendMessage(chatId, messages.crew.workers.duplicate)
+        await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
+        return
+      }
+
+      await crewRepo.recalcCrewFilled(session.data.shiftId)
+      await bot.sendMessage(chatId, messages.crew.workers.added(fio))
+    }
+
+    const updatedSession = {
+      ...session,
+      data: {
+        ...session.data,
+        currentInput: null,
+      },
+    }
+
+    crewSessions.set(telegramId, updatedSession)
+    await renderHub({ bot, chatId, telegramId, session: updatedSession, crewRepo, messages, logger, withKeyboard: true })
   } catch (error) {
-    logger.error('Ошибка при сохранении заместителя', { error: error.message })
+    logger.error('Ошибка при сохранении данных роли', { error: error.message })
     await bot.sendMessage(chatId, messages.crew.unexpectedError)
   }
 }
 
-// Русский комментарий: обработка ввода водителя
-async function handleDriverInput({ bot, chatId, telegramId, text, session, crewRepo, messages, logger }) {
-  if (!isValidFullName(text)) {
-    await bot.sendMessage(chatId, messages.crew.validationError)
-    return
-  }
-
-  try {
-    const crew = await crewRepo.getCrewByShift(session.data.shiftId)
-    const driver = await crewRepo.findOrCreateDriver(normalizeName(text))
-
-    await crewRepo.upsertDriver({
-      shiftId: session.data.shiftId,
-      driverId: driver.id,
-      deputyWorkerId: crew.deputy?.id ?? null,
-    })
-
-    await crewRepo.recalcCrewFilled(session.data.shiftId)
-    await bot.sendMessage(chatId, messages.crew.driver.saved(normalizeName(text)))
-    await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
-  } catch (error) {
-    logger.error('Ошибка при сохранении водителя', { error: error.message })
-    await bot.sendMessage(chatId, messages.crew.unexpectedError)
-  }
-}
-
-// Русский комментарий: обработка ввода рабочего
-async function handleWorkerInput({ bot, chatId, telegramId, text, session, crewRepo, messages, logger }) {
-  if (!isValidFullName(text)) {
-    await bot.sendMessage(chatId, messages.crew.validationError)
-    return
-  }
-
-  try {
-    const worker = await crewRepo.findOrCreateWorker(normalizeName(text))
-    const added = await crewRepo.addWorkerToShift({ shiftId: session.data.shiftId, workerId: worker.id })
-
-    if (!added) {
-      await bot.sendMessage(chatId, messages.crew.workers.duplicate)
-      await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
-      return
-    }
-
-    await crewRepo.recalcCrewFilled(session.data.shiftId)
-    await bot.sendMessage(chatId, messages.crew.workers.added(normalizeName(text)))
-    await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
-  } catch (error) {
-    logger.error('Ошибка при добавлении рабочего', { error: error.message })
-    await bot.sendMessage(chatId, messages.crew.unexpectedError)
-  }
-}
 
 // Русский комментарий: обработка удаления рабочего
 async function removeWorkerHandler({ bot, chatId, telegramId, session, workerId, crewRepo, messages, logger }) {
@@ -421,7 +661,12 @@ async function clearDeputyHandler({ bot, chatId, telegramId, session, messages, 
 
     await crewRepo.recalcCrewFilled(session.data.shiftId)
     await bot.sendMessage(chatId, messages.crew.deputy.cleared)
-    await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
+    const updatedSession = {
+      ...session,
+      data: { ...session.data, currentInput: null },
+    }
+    crewSessions.set(telegramId, updatedSession)
+    await renderHub({ bot, chatId, telegramId, session: updatedSession, crewRepo, messages, logger, withKeyboard: true })
   } catch (error) {
     logger.error('Ошибка при очистке заместителя', { error: error.message })
     await bot.sendMessage(chatId, messages.crew.unexpectedError)
@@ -486,10 +731,8 @@ function buildHubKeyboard({ crew, ready, messages }) {
   ]
 
   crew.workers.forEach((worker) => {
-    keyboard.push([{ text: `❌ ${worker.fullName}`, callback_data: `crew:worker:remove:${worker.id}` }])
+    keyboard.push([{ text: `❌ ${formatShortName(worker.fullName)}`, callback_data: `crew:worker:remove:${worker.id}` }])
   })
-
-  keyboard.push([{ text: messages.crew.buttons.refresh, callback_data: 'crew:refresh' }])
 
   if (ready) {
     keyboard.push([{ text: messages.crew.buttons.confirm, callback_data: 'crew:confirm' }])
@@ -498,25 +741,49 @@ function buildHubKeyboard({ crew, ready, messages }) {
   return keyboard
 }
 
-// Русский комментарий: валидация ФИО (минимум два слова, только кириллица и дефис)
-function isValidFullName(value) {
+// Русский комментарий: валидация части ФИО (кириллица, первая буква заглавная, допускается дефис)
+function isValidNamePart(value) {
   if (!value) {
     return false
   }
 
-  const normalized = normalizeName(value)
-  const parts = normalized.split(' ')
-
-  if (parts.length < 2) {
-    return false
-  }
-
-  return parts.every((part) => /^[А-ЯЁа-яё-]+$/u.test(part))
+  return /^[А-ЯЁ][а-яё-]+$/u.test(value.trim())
 }
 
 // Русский комментарий: нормализация пробелов в ФИО
 function normalizeName(value) {
   return value.trim().replace(/\s+/g, ' ')
+}
+
+// Русский комментарий: форматирование ФИО в вид «Фамилия И. О.»
+function formatFio({ surname, name, patronymic }) {
+  const safeSurname = surname ? normalizeName(surname) : ''
+  const safeName = name ? normalizeName(name) : ''
+  const safePatronymic = patronymic ? normalizeName(patronymic) : ''
+
+  const initials = [safeName, safePatronymic]
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0)}.`)
+    .join(' ')
+
+  return [safeSurname, initials].filter(Boolean).join(' ')
+}
+
+// Русский комментарий: отображение ФИО в коротком виде для хаба
+function formatShortName(value) {
+  if (!value) {
+    return null
+  }
+
+  const parts = normalizeName(value).split(' ')
+
+  if (parts.length === 1) {
+    return parts[0]
+  }
+
+  const [surname, ...rest] = parts
+  const initials = rest.map((part) => `${part.charAt(0)}.`).join(' ')
+  return `${surname} ${initials}`.trim()
 }
 
 module.exports = { registerCrewModule }
