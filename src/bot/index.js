@@ -71,20 +71,6 @@ function createBot({ token, logger, repositories, messages, directusClient, dire
     holdsRepo: repositories.holds,
     holdPhotosRepo: repositories.holdPhotos,
     brigadiersRepo: repositories.brigadiers,
-    uploadsDir,
-    openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
-      openShiftMenu({ bot, chatId, telegramId, brigadier, shift, messages, logger }),
-  })
-
-  // TODO: Review for merge — подключаем блок фото трюмов
-  const photosModule = registerPhotosModule({
-    bot,
-    logger,
-    messages,
-    shiftsRepo: repositories.shifts,
-    holdsRepo: repositories.holds,
-    holdPhotosRepo: repositories.holdPhotos,
-    brigadiersRepo: repositories.brigadiers,
     directusConfig,
     openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
       openShiftMenu({ bot, chatId, telegramId, brigadier, shift, messages, logger }),
