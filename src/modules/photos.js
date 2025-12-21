@@ -21,10 +21,9 @@ function registerPhotosModule({
   holdPhotosRepo,
   brigadiersRepo,
   uploadsDir,
-  directusConfig,
   openShiftMenu,
 }) {
-  const storage = createPhotosStorage({ logger, directusConfig, uploadsDir })
+  const storage = createPhotosStorage({ logger, uploadsDir })
 
   bot.on('callback_query', async (query) => {
     const action = query.data
@@ -258,6 +257,8 @@ function registerPhotosModule({
         shiftDate: session.shiftDate,
         shipName: session.shipName,
         holdNumber: session.currentHoldNumber,
+        shiftId: session.shiftId,
+        holdId: session.currentHoldId,
       })
 
       const stored = await storage.saveTelegramPhoto({ bot, fileId: photoId, logicalPathParts })
@@ -268,12 +269,15 @@ function registerPhotosModule({
         telegramFileId: photoId,
         diskPath: stored.diskPath,
         diskPublicUrl: stored.diskPublicUrl,
-        directusFileId: stored.directusFileId,
       })
 
       await renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger })
     } catch (error) {
-      logger.error('Ошибка сохранения фото трюма', { error: error.message })
+      logger.error('Ошибка сохранения фото трюма', {
+        error: error.message,
+        shiftId: session.shiftId,
+        holdId: session.currentHoldId,
+      })
       await bot.sendMessage(chatId, messages.systemError)
     }
   })
@@ -468,7 +472,7 @@ async function removeLastPhoto({ bot, chatId, session, messages, holdPhotosRepo,
     const deleted = await holdPhotosRepo.deleteLastPhoto({ shiftId: session.shiftId, holdId: session.currentHoldId })
 
     if (deleted) {
-      await storage.deleteStoredFile({ directusFileId: deleted.directus_file_id, diskPath: deleted.disk_path })
+      await storage.deleteStoredFile({ diskPath: deleted.disk_path })
     }
   } catch (error) {
     logger.error('Не удалось удалить последнее фото трюма', { error: error.message })
@@ -487,14 +491,15 @@ function extractLargestPhotoId(photos) {
 }
 
 // TODO: Review for merge — формируем части пути по правилам и экранируем спецсимволы
-function buildLogicalPathParts({ shiftDate, shipName, holdNumber }) {
+function buildLogicalPathParts({ shiftDate, shipName, holdNumber, shiftId, holdId }) {
   const date = new Date(shiftDate)
   const year = date.getUTCFullYear()
   const month = String(date.getUTCMonth() + 1).padStart(2, '0')
   const day = String(date.getUTCDate()).padStart(2, '0')
-  const dateFolder = `${year}-${month}-${day}`
   const shipSegment = sanitizePathPart(shipName)
-  return [year.toString(), month, day, `${dateFolder} — ${shipSegment}`, `Трюм ${holdNumber}`]
+  const shiftFolder = `shift_${shiftId}_${shipSegment}`
+  const holdFolder = `hold_${holdId}`
+  return [year.toString(), month, day, shiftFolder, holdFolder]
 }
 
 // TODO: Review for merge — санитария сегментов пути

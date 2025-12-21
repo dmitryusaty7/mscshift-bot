@@ -72,7 +72,6 @@ async function bootstrap() {
     },
     messages,
     directusClient,
-    directusConfig: config.directus,
     uploadsDir: config.uploadsDir,
   })
 

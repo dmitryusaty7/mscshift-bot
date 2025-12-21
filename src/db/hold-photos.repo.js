@@ -11,7 +11,7 @@ function createHoldPhotosRepo(pool, logger) {
   }
 
   // TODO: Review for merge — сохраняем запись о фото трюма
-  async function addPhoto({ shiftId, holdId, telegramFileId, diskPath, diskPublicUrl, directusFileId }) {
+  async function addPhoto({ shiftId, holdId, telegramFileId, diskPath, diskPublicUrl }) {
     try {
       const query = `
         INSERT INTO hold_photos (
@@ -19,10 +19,9 @@ function createHoldPhotosRepo(pool, logger) {
           hold_id,
           telegram_file_id,
           disk_path,
-          disk_public_url,
-          directus_file_id
+          disk_public_url
         )
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES ($1, $2, $3, $4, $5)
         RETURNING id
       `
 
@@ -32,7 +31,6 @@ function createHoldPhotosRepo(pool, logger) {
         telegramFileId,
         diskPath,
         diskPublicUrl,
-        directusFileId,
       ])
 
       return rows[0] || null
@@ -46,23 +44,20 @@ function createHoldPhotosRepo(pool, logger) {
   // TODO: Review for merge — удаляем последнюю фотографию трюма
   async function deleteLastPhoto({ shiftId, holdId }) {
     try {
-      const selectQuery = `
-        SELECT id, directus_file_id, disk_path
-        FROM hold_photos
-        WHERE shift_id = $1 AND hold_id = $2
-        ORDER BY id DESC
-        LIMIT 1
+      const deleteQuery = `
+        DELETE FROM hold_photos
+        WHERE id = (
+          SELECT id
+          FROM hold_photos
+          WHERE shift_id = $1 AND hold_id = $2
+          ORDER BY created_at DESC
+          LIMIT 1
+        )
+        RETURNING id, disk_path
       `
 
-      const { rows } = await pool.query(selectQuery, [shiftId, holdId])
-      const lastPhoto = rows[0]
-
-      if (!lastPhoto) {
-        return null
-      }
-
-      await pool.query('DELETE FROM hold_photos WHERE id = $1', [lastPhoto.id])
-      return lastPhoto
+      const { rows } = await pool.query(deleteQuery, [shiftId, holdId])
+      return rows[0] || null
     } catch (error) {
       // TODO: Review for merge — логируем ошибку БД с подсказкой про патч
       await handleDbError({ error, operation: 'deleteLastPhoto', shiftId, holdId })
@@ -106,7 +101,7 @@ function createHoldPhotosRepo(pool, logger) {
         shiftId,
         holdId,
         error: error.message,
-        hint: 'Требуется обновить схему public.hold_photos (см. scripts/db/patch_block8_hold_photos.sql)',
+        hint: 'Проверьте схему public.hold_photos и наличие колонок shift_id, hold_id, telegram_file_id, disk_path, disk_public_url, created_at',
       })
     }
 

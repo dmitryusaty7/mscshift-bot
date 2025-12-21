@@ -15,7 +15,7 @@ function validateEnv() {
       user: requireEnv('PG_USER'),
       password: requireEnv('PG_PASSWORD'),
     },
-    uploadsDir: process.env.UPLOADS_DIR || '/opt/mscshift-bot/uploads/holds',
+    uploadsDir: process.env.UPLOADS_DIR || '/uploads',
   }
 
   // TODO: Review for merge — Directus настраивается опционально и не должен блокировать запуск
