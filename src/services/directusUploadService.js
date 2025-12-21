@@ -9,7 +9,10 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
   async function uploadFile({ buffer, filename, title, mimeType, folderId }) {
     try {
       const form = new FormData()
-      form.append('file', new Blob([buffer]), filename || 'photo.jpg', { type: mimeType || 'image/jpeg' })
+      const effectiveMimeType = mimeType || 'image/jpeg'
+      const targetFolderId = folderId || process.env.DIRECTUS_UPLOAD_FOLDER_ID
+
+      form.append('file', new Blob([buffer]), filename || 'photo.jpg', { type: effectiveMimeType })
 
       if (title) {
         form.append('title', title)
@@ -19,12 +22,12 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
         form.append('filename_download', filename)
       }
 
-      if (mimeType) {
-        form.append('type', mimeType)
+      if (effectiveMimeType) {
+        form.append('type', effectiveMimeType)
       }
 
-      if (folderId) {
-        form.append('folder', folderId)
+      if (targetFolderId) {
+        form.append('folder', targetFolderId)
       }
 
       const response = await fetch(`${baseUrl}/files`, {
