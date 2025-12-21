@@ -1,6 +1,5 @@
 const TelegramBot = require('node-telegram-bot-api')
 const { registerStartHandler } = require('./handlers/start.handler')
-const { registerPhotoHandler } = require('./handlers/photo.handler')
 const { registerRegistrationModule } = require('../modules/register')
 const { registerShiftMenuModule, startShiftMenuFlow, openShiftMenu } = require('../modules/shift-menu')
 const { registerMainPanelModule, showMainPanel, openMainPanel } = require('../modules/main-panel')
@@ -9,9 +8,11 @@ const { registerSalaryModule } = require('../modules/salary')
 const { registerMaterialsModule } = require('../modules/materials')
 // TODO: Review for merge — регистрация блока расходов
 const { registerExpensesModule } = require('../modules/expenses')
+// TODO: Review for merge — регистрация блока 8 «Фото трюмов»
+const { registerPhotosModule } = require('../modules/photos')
 
 // Создаём экземпляр бота и регистрируем обработчики
-function createBot({ token, logger, repositories, messages, directusClient }) {
+function createBot({ token, logger, repositories, messages, directusClient, uploadsDir, directusConfig }) {
   const bot = new TelegramBot(token, { polling: true })
 
   const crewModule = registerCrewModule({
@@ -57,6 +58,21 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
     expensesRepo: repositories.expenses,
     shiftsRepo: repositories.shifts,
     brigadiersRepo: repositories.brigadiers,
+      openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
+      openShiftMenu({ bot, chatId, telegramId, brigadier, shift, messages, logger }),
+  })
+
+  // TODO: Review for merge — подключаем блок фото трюмов
+  const photosModule = registerPhotosModule({
+    bot,
+    logger,
+    messages,
+    shiftsRepo: repositories.shifts,
+    holdsRepo: repositories.holds,
+    holdPhotosRepo: repositories.holdPhotos,
+    brigadiersRepo: repositories.brigadiers,
+    uploadsDir,
+    directusConfig,
     openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
       openShiftMenu({ bot, chatId, telegramId, brigadier, shift, messages, logger }),
   })
@@ -95,13 +111,6 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
       }),
   })
 
-  registerPhotoHandler({
-    bot,
-    directusClient,
-    logger,
-    messages,
-  })
-
   registerShiftMenuModule({
     bot,
     brigadiersRepo: repositories.brigadiers,
@@ -128,6 +137,8 @@ function createBot({ token, logger, repositories, messages, directusClient }) {
       materialsModule.openMaterialsFromShiftMenu({ chatId, telegramId, session }),
     openExpensesScene: ({ chatId, telegramId, session }) =>
       expensesModule.openExpensesFromShiftMenu({ chatId, telegramId, session }),
+    openPhotosScene: ({ chatId, telegramId, session }) =>
+      photosModule.openPhotosFromShiftMenu({ chatId, telegramId, session }),
   })
 
   registerMainPanelModule({
