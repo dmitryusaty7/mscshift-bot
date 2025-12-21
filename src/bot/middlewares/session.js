@@ -11,6 +11,8 @@ const USER_STATES = {
   SHIFT_MATERIALS: 'SHIFT_MATERIALS',
   // TODO: Review for merge — состояние работы с расходами
   SHIFT_EXPENSES: 'SHIFT_EXPENSES',
+  // TODO: Review for merge — состояние работы с фото трюмов
+  SHIFT_PHOTOS: 'SHIFT_PHOTOS',
 }
 
 const sessions = new Map()
