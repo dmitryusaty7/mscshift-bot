@@ -1,3 +1,5 @@
+const path = require('path')
+const fs = require('fs/promises')
 const { USER_STATES, setUserState, getUserState } = require('../bot/middlewares/session')
 const { createDirectusUploadService } = require('../services/directusUploadService')
 
@@ -10,6 +12,8 @@ const PHOTO_STEPS = {
 }
 
 const photoSessions = new Map()
+// TODO: Review for merge — базовая директория для локального сохранения фото
+const LOCAL_UPLOADS_DIR = '/opt/mscshift-bot/uploads/holds'
 
 // TODO: Review for merge — регистрация модуля Блока 8 «Фото трюмов»
 function registerPhotosModule({
@@ -255,12 +259,6 @@ function registerPhotosModule({
       return
     }
 
-    if (!directusUploader) {
-      logger.error('Directus не инициализирован: загрузка фото невозможна')
-      await bot.sendMessage(chatId, messages.systemError)
-      return
-    }
-
     const photoId = extractLargestPhotoId(msg.photo)
 
     if (!photoId) {
@@ -270,22 +268,84 @@ function registerPhotosModule({
     }
 
     try {
-      // TODO: Review for merge — скачиваем фото из Telegram и отправляем в Directus
+      // TODO: Review for merge — скачиваем фото из Telegram
       const downloaded = await downloadFromTelegram(bot, photoId)
-      const uploaded = await directusUploader.uploadBuffer({
+
+      // TODO: Review for merge — сохраняем файл локально как резервную копию
+      const localPath = await savePhotoLocally({
         buffer: downloaded.buffer,
-        filename: downloaded.fileName,
-        mimeType: downloaded.mimeType,
+        shiftId: session.shiftId,
+        holdId: session.currentHoldId,
+        shipName: session.shipName,
+        fileName: downloaded.fileName,
+        logger,
       })
 
-      const assetPath = `/assets/${uploaded.fileId}`
+      if (logger) {
+        logger.info('Локальный файл фото трюма сохранён', {
+          shiftId: session.shiftId,
+          holdId: session.currentHoldId,
+          localPath,
+        })
+      }
+
+      let diskPath = localPath
+      let diskPublicUrl = null
+
+      if (directusUploader) {
+        try {
+          if (logger) {
+            logger.info('Начата загрузка фото в Directus', {
+              shiftId: session.shiftId,
+              holdId: session.currentHoldId,
+              fileName: downloaded.fileName,
+            })
+          }
+
+          const uploaded = await directusUploader.uploadFile({
+            buffer: downloaded.buffer,
+            filename: downloaded.fileName,
+            title: `Shift ${session.shiftId} / Hold ${session.currentHoldId}`,
+            mimeType: downloaded.mimeType,
+          })
+
+          diskPath = `/assets/${uploaded.fileId}`
+          diskPublicUrl = `${directusConfig.baseUrl}${diskPath}`
+
+          if (logger) {
+            logger.info('Directus успешно принял фото трюма', {
+              shiftId: session.shiftId,
+              holdId: session.currentHoldId,
+              directusId: uploaded.fileId,
+            })
+          }
+        } catch (uploadError) {
+          if (logger) {
+            logger.error('Сбой загрузки фото в Directus, используем только локальный файл', {
+              error: uploadError.message,
+              shiftId: session.shiftId,
+              holdId: session.currentHoldId,
+            })
+          }
+        }
+      }
+
       await holdPhotosRepo.addPhoto({
         shiftId: session.shiftId,
         holdId: session.currentHoldId,
         telegramFileId: photoId,
-        diskPath: assetPath,
-        diskPublicUrl: `${directusConfig.baseUrl}${assetPath}`,
+        diskPath,
+        diskPublicUrl,
       })
+
+      if (logger) {
+        logger.info('Запись о фото трюма сохранена', {
+          shiftId: session.shiftId,
+          holdId: session.currentHoldId,
+          diskPath,
+          diskPublicUrl,
+        })
+      }
 
       await renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger })
     } catch (error) {
@@ -452,7 +512,7 @@ async function returnToShiftMenu({ bot, chatId, telegramId, session, brigadiersR
 }
 
 // TODO: Review for merge — подтверждение фото и возврат в меню смены
-async function confirmPhotosAndReturn({
+  async function confirmPhotosAndReturn({
   bot,
   chatId,
   telegramId,
@@ -482,7 +542,7 @@ async function confirmPhotosAndReturn({
   }
 }
 
-// TODO: Review for merge — удаление последнего фото трюма с очисткой в Directus
+// TODO: Review for merge — удаление последнего фото трюма с очисткой в Directus и локальной ФС
 async function removeLastPhoto({ bot, chatId, session, messages, holdPhotosRepo, logger, directusUploader }) {
   try {
     const lastPhoto = await holdPhotosRepo.findLastPhoto({ shiftId: session.shiftId, holdId: session.currentHoldId })
@@ -491,13 +551,34 @@ async function removeLastPhoto({ bot, chatId, session, messages, holdPhotosRepo,
       return
     }
 
-    const directusId = extractDirectusId(lastPhoto.disk_public_url)
+    const directusId = extractDirectusId(lastPhoto.disk_public_url || lastPhoto.disk_path)
 
     if (directusUploader && directusId) {
       await directusUploader.deleteFile(directusId)
     }
 
     await holdPhotosRepo.deletePhotoById(lastPhoto.id)
+
+    if (lastPhoto.disk_path && !isAssetPath(lastPhoto.disk_path)) {
+      try {
+        await fs.rm(lastPhoto.disk_path, { force: true })
+
+        if (logger) {
+          logger.info('Локальный файл фото трюма удалён', {
+            shiftId: session.shiftId,
+            holdId: session.currentHoldId,
+            path: lastPhoto.disk_path,
+          })
+        }
+      } catch (fsError) {
+        if (logger) {
+          logger.error('Не удалось удалить локальный файл фото трюма', {
+            error: fsError.message,
+            path: lastPhoto.disk_path,
+          })
+        }
+      }
+    }
   } catch (error) {
     logger.error('Не удалось удалить последнее фото трюма', { error: error.message })
     await bot.sendMessage(chatId, messages.systemError)
@@ -539,6 +620,48 @@ function extractDirectusId(publicUrl) {
 
   const match = String(publicUrl).match(/\/assets\/([\w-]+)/)
   return match?.[1] || null
+}
+
+// TODO: Review for merge — определяем, указывает ли путь на Directus-asset
+function isAssetPath(pathValue) {
+  return typeof pathValue === 'string' && pathValue.startsWith('/assets/')
+}
+
+// TODO: Review for merge — сохраняем фото на диск по вложенной структуре и возвращаем путь
+async function savePhotoLocally({ buffer, shiftId, holdId, shipName, fileName, logger }) {
+  const now = new Date()
+  const year = String(now.getFullYear())
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  const safeShip = sanitizeForFs(shipName)
+  const safeFile = `${Date.now()}-${sanitizeForFs(fileName || 'photo.jpg')}`
+
+  const dir = path.join(LOCAL_UPLOADS_DIR, year, month, day, `shift_${shiftId}_${safeShip}`, `hold_${holdId}`)
+
+  await fs.mkdir(dir, { recursive: true })
+
+  const fullPath = path.join(dir, safeFile)
+  await fs.writeFile(fullPath, buffer)
+
+  if (logger) {
+    logger.info('Локальный файл фото трюма записан на диск', { fullPath })
+  }
+
+  return fullPath
+}
+
+// TODO: Review for merge — делаем имя файла и судна безопасными для ФС
+function sanitizeForFs(value) {
+  const base = String(value || '').trim()
+
+  if (!base) {
+    return 'unknown'
+  }
+
+  return base
+    .replace(/[\\/]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/[^\w\-.А-Яа-яЁё]/g, '_')
 }
 
 module.exports = { registerPhotosModule }

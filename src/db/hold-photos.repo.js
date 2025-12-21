@@ -46,7 +46,7 @@ function createHoldPhotosRepo(pool, logger) {
   async function findLastPhoto({ shiftId, holdId }) {
     try {
       const selectQuery = `
-        SELECT id, disk_public_url
+        SELECT id, disk_public_url, disk_path
         FROM hold_photos
         WHERE shift_id = $1 AND hold_id = $2
         ORDER BY created_at DESC

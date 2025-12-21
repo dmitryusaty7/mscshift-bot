@@ -5,11 +5,27 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
     throw new Error('Directus не настроен: требуется DIRECTUS_URL и DIRECTUS_TOKEN')
   }
 
-  // TODO: Review for merge — загружаем файл-буфер в Directus и возвращаем идентификатор
-  async function uploadBuffer({ buffer, filename, mimeType }) {
+  // TODO: Review for merge — загружаем файл-буфер в Directus с метаданными
+  async function uploadFile({ buffer, filename, title, mimeType, folderId }) {
     try {
       const form = new FormData()
       form.append('file', new Blob([buffer]), filename || 'photo.jpg', { type: mimeType || 'image/jpeg' })
+
+      if (title) {
+        form.append('title', title)
+      }
+
+      if (filename) {
+        form.append('filename_download', filename)
+      }
+
+      if (mimeType) {
+        form.append('type', mimeType)
+      }
+
+      if (folderId) {
+        form.append('folder', folderId)
+      }
 
       const response = await fetch(`${baseUrl}/files`, {
         method: 'POST',
@@ -42,6 +58,11 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
       logger.error('Сбой загрузки фото в Directus', { error: error.message })
       throw error
     }
+  }
+
+  // TODO: Review for merge — обёртка для старого вызова без метаданных
+  async function uploadBuffer({ buffer, filename, mimeType }) {
+    return uploadFile({ buffer, filename, mimeType })
   }
 
   // TODO: Review for merge — удаляем файл в Directus по идентификатору
@@ -82,7 +103,7 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
     }
   }
 
-  return { uploadBuffer, deleteFile }
+  return { uploadFile, uploadBuffer, deleteFile }
 }
 
 module.exports = { createDirectusUploadService }
