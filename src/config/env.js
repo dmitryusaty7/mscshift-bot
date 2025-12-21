@@ -3,6 +3,7 @@ require('dotenv').config()
 
 // Проверяем обязательные переменные окружения и формируем конфиг
 function validateEnv() {
+  // TODO: Review for merge — базовая валидация окружения
   const config = {
     bot: {
       token: requireEnv('TELEGRAM_BOT_TOKEN'),
@@ -14,16 +15,21 @@ function validateEnv() {
       user: requireEnv('PG_USER'),
       password: requireEnv('PG_PASSWORD'),
     },
-    directus: {
-      baseUrl: requireEnv('DIRECTUS_URL'),
-      token: requireEnv('DIRECTUS_STATIC_TOKEN'),
-      collections: {
-        users: process.env.DIRECTUS_USERS_COLLECTION || 'users',
-        shifts: process.env.DIRECTUS_SHIFTS_COLLECTION || 'shifts',
-        shiftPhotos: process.env.DIRECTUS_SHIFT_PHOTOS_COLLECTION || 'shift_photos',
-      },
-      defaultShiftStatus: process.env.DIRECTUS_SHIFT_DEFAULT_STATUS || undefined,
-    },
+  }
+
+  // TODO: Review for merge — Directus настраивается опционально и не должен блокировать запуск
+  const directusUrl = readEnvSoft('DIRECTUS_URL')
+  const directusToken = readEnvSoft('DIRECTUS_TOKEN')
+  const directusRootFolder = process.env.DIRECTUS_ROOT_FOLDER || 'MSCShiftBot'
+
+  if (directusUrl && directusToken) {
+    config.directus = {
+      baseUrl: removeTrailingSlash(directusUrl),
+      token: directusToken,
+      rootFolder: directusRootFolder,
+    }
+  } else {
+    config.directus = null
   }
 
   return config
@@ -38,6 +44,21 @@ function requireEnv(name) {
   }
 
   return value
+}
+
+// Мягкое чтение переменной окружения без остановки процесса
+function readEnvSoft(name) {
+  const value = process.env[name]
+  return value && String(value).trim() !== '' ? String(value).trim() : null
+}
+
+// Удаляем завершающий слэш для единообразия URL
+function removeTrailingSlash(url) {
+  if (!url) {
+    return url
+  }
+
+  return url.endsWith('/') ? url.slice(0, -1) : url
 }
 
 module.exports = { validateEnv }
