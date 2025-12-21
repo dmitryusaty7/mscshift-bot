@@ -42,7 +42,7 @@ async function bootstrap() {
   const expensesRepo = createExpensesRepo(pool)
   // TODO: Review for merge — инициализация работы с трюмами и фото трюмов
   const holdsRepo = createHoldsRepo(pool)
-  const holdPhotosRepo = createHoldPhotosRepo(pool)
+  const holdPhotosRepo = createHoldPhotosRepo(pool, logger)
   // TODO: Review for merge — Directus может быть не настроен, поэтому клиент создаётся только при наличии конфигурации
   const directusClient = config.directus
     ? createDirectusClient({

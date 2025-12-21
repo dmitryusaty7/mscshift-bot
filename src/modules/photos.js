@@ -221,11 +221,6 @@ function registerPhotosModule({
           await renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger })
           return
         }
-
-        if (msg.text === messages.photos.hold.add) {
-          // TODO: Review for merge — просим отправить фото ещё раз
-          await renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger })
-        }
       }
     } catch (error) {
       logger.error('Ошибка обработки текстового сообщения в модуле фото трюмов', { error: error.message })
@@ -244,6 +239,8 @@ function registerPhotosModule({
     const session = photoSessions.get(telegramId)
 
     if (!session || session.step !== PHOTO_STEPS.HOLD || !session.currentHoldId) {
+      // TODO: Review for merge — информируем пользователя, что контекст трюма не выбран
+      await bot.sendMessage(chatId, messages.photos.noHoldSelected)
       return
     }
 
@@ -375,7 +372,6 @@ async function renderHold({ bot, chatId, session, messages, holdPhotosRepo, logg
     await bot.sendMessage(chatId, text, {
       reply_markup: {
         keyboard: [
-          [{ text: messages.photos.hold.add }],
           [{ text: messages.photos.hold.removeLast }],
           [{ text: messages.photos.hold.back }],
         ],
