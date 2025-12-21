@@ -6,6 +6,7 @@ function createShiftsRepo(pool) {
     countActiveByBrigadier,
     getActiveByBrigadier,
     findActiveByIdAndBrigadier,
+    markPhotosFilled,
   }
 
   // Проверяем, есть ли смена с такой датой, бригадиром и судном
@@ -139,6 +140,18 @@ function createShiftsRepo(pool) {
 
     const { rows } = await pool.query(query, [shiftId, brigadierId])
     return rows[0] || null
+  }
+
+  // TODO: Review for merge — отмечаем блок фото заполненным
+  async function markPhotosFilled(shiftId) {
+    const query = `
+      UPDATE shifts
+      SET is_photos_filled = true,
+          updated_at = now()
+      WHERE id = $1
+    `
+
+    await pool.query(query, [shiftId])
   }
 }
 
