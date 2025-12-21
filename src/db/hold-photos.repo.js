@@ -5,7 +5,8 @@ function createHoldPhotosRepo(pool, logger) {
 
   return {
     addPhoto,
-    deleteLastPhoto,
+    findLastPhoto,
+    deletePhotoById,
     countByHold,
     countTotalByShift,
   }
@@ -41,26 +42,37 @@ function createHoldPhotosRepo(pool, logger) {
     }
   }
 
-  // TODO: Review for merge — удаляем последнюю фотографию трюма
-  async function deleteLastPhoto({ shiftId, holdId }) {
+  // TODO: Review for merge — получаем последнюю фотографию трюма
+  async function findLastPhoto({ shiftId, holdId }) {
     try {
-      const deleteQuery = `
-        DELETE FROM hold_photos
-        WHERE id = (
-          SELECT id
-          FROM hold_photos
-          WHERE shift_id = $1 AND hold_id = $2
-          ORDER BY created_at DESC
-          LIMIT 1
-        )
-        RETURNING id, disk_path
+      const selectQuery = `
+        SELECT id, disk_public_url
+        FROM hold_photos
+        WHERE shift_id = $1 AND hold_id = $2
+        ORDER BY created_at DESC
+        LIMIT 1
       `
 
-      const { rows } = await pool.query(deleteQuery, [shiftId, holdId])
+      const { rows } = await pool.query(selectQuery, [shiftId, holdId])
       return rows[0] || null
     } catch (error) {
-      // TODO: Review for merge — логируем ошибку БД с подсказкой про патч
-      await handleDbError({ error, operation: 'deleteLastPhoto', shiftId, holdId })
+      await handleDbError({ error, operation: 'findLastPhoto', shiftId, holdId })
+      throw error
+    }
+  }
+
+  // TODO: Review for merge — удаляем фото по идентификатору
+  async function deletePhotoById(id) {
+    if (!id) {
+      return null
+    }
+
+    try {
+      const deleteQuery = 'DELETE FROM hold_photos WHERE id = $1 RETURNING id'
+      const { rows } = await pool.query(deleteQuery, [id])
+      return rows[0] || null
+    } catch (error) {
+      await handleDbError({ error, operation: 'deletePhotoById', holdPhotoId: id })
       throw error
     }
   }
@@ -94,12 +106,13 @@ function createHoldPhotosRepo(pool, logger) {
   }
 
   // TODO: Review for merge — единообразный дамп схемы для отладки в продакшене
-  async function handleDbError({ error, operation, shiftId, holdId }) {
+  async function handleDbError({ error, operation, shiftId, holdId, holdPhotoId }) {
     if (logger) {
       logger.error('Сбой работы с таблицей hold_photos', {
         operation,
         shiftId,
         holdId,
+        holdPhotoId,
         error: error.message,
         hint: 'Проверьте схему public.hold_photos и наличие колонок shift_id, hold_id, telegram_file_id, disk_path, disk_public_url, created_at',
       })

@@ -1,5 +1,5 @@
 const { USER_STATES, setUserState, getUserState } = require('../bot/middlewares/session')
-const { createPhotosStorage } = require('../services/photosStorage')
+const { createDirectusUploadService } = require('../services/directusUploadService')
 
 // TODO: Review for merge — шаги сценария фото трюмов
 const PHOTO_STEPS = {
@@ -20,10 +20,22 @@ function registerPhotosModule({
   holdsRepo,
   holdPhotosRepo,
   brigadiersRepo,
-  uploadsDir,
+  directusConfig,
   openShiftMenu,
 }) {
-  const storage = createPhotosStorage({ logger, uploadsDir })
+  let directusUploader = null
+
+  if (directusConfig) {
+    try {
+      directusUploader = createDirectusUploadService({
+        baseUrl: directusConfig.baseUrl,
+        token: directusConfig.token,
+        logger,
+      })
+    } catch (error) {
+      logger.error('Directus не сконфигурирован для загрузки фото', { error: error.message })
+    }
+  }
 
   bot.on('callback_query', async (query) => {
     const action = query.data
@@ -214,8 +226,8 @@ function registerPhotosModule({
             session,
             messages,
             holdPhotosRepo,
-            storage,
             logger,
+            directusUploader,
           })
           await renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger })
           return
@@ -243,6 +255,12 @@ function registerPhotosModule({
       return
     }
 
+    if (!directusUploader) {
+      logger.error('Directus не инициализирован: загрузка фото невозможна')
+      await bot.sendMessage(chatId, messages.systemError)
+      return
+    }
+
     const photoId = extractLargestPhotoId(msg.photo)
 
     if (!photoId) {
@@ -252,23 +270,21 @@ function registerPhotosModule({
     }
 
     try {
-      // TODO: Review for merge — сохраняем фото и обновляем счётчик
-      const logicalPathParts = buildLogicalPathParts({
-        shiftDate: session.shiftDate,
-        shipName: session.shipName,
-        holdNumber: session.currentHoldNumber,
-        shiftId: session.shiftId,
-        holdId: session.currentHoldId,
+      // TODO: Review for merge — скачиваем фото из Telegram и отправляем в Directus
+      const downloaded = await downloadFromTelegram(bot, photoId)
+      const uploaded = await directusUploader.uploadBuffer({
+        buffer: downloaded.buffer,
+        filename: downloaded.fileName,
+        mimeType: downloaded.mimeType,
       })
 
-      const stored = await storage.saveTelegramPhoto({ bot, fileId: photoId, logicalPathParts })
-
+      const assetPath = `/assets/${uploaded.fileId}`
       await holdPhotosRepo.addPhoto({
         shiftId: session.shiftId,
         holdId: session.currentHoldId,
         telegramFileId: photoId,
-        diskPath: stored.diskPath,
-        diskPublicUrl: stored.diskPublicUrl,
+        diskPath: assetPath,
+        diskPublicUrl: `${directusConfig.baseUrl}${assetPath}`,
       })
 
       await renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger })
@@ -301,7 +317,6 @@ function registerPhotosModule({
       }
 
       await holdsRepo.ensureForShift({ shiftId, count: shift.holds_count })
-
       const newSession = {
         step: PHOTO_STEPS.INTRO,
         shiftId,
@@ -368,11 +383,12 @@ async function renderHub({ bot, chatId, session, messages, holdsRepo, logger, wi
 }
 
 // TODO: Review for merge — отрисовка экрана конкретного трюма
-async function renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger }) {
+  async function renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger }) {
   try {
     const count = await holdPhotosRepo.countByHold({ shiftId: session.shiftId, holdId: session.currentHoldId })
     const text = messages.photos.hold.title(session.currentHoldNumber, count)
 
+    // TODO: Review for merge — пользователь добавляет фото напрямую в чат, отдельная кнопка не нужна
     await bot.sendMessage(chatId, text, {
       reply_markup: {
         keyboard: [
@@ -466,14 +482,22 @@ async function confirmPhotosAndReturn({
   }
 }
 
-// TODO: Review for merge — удаление последнего фото трюма
-async function removeLastPhoto({ bot, chatId, session, messages, holdPhotosRepo, storage, logger }) {
+// TODO: Review for merge — удаление последнего фото трюма с очисткой в Directus
+async function removeLastPhoto({ bot, chatId, session, messages, holdPhotosRepo, logger, directusUploader }) {
   try {
-    const deleted = await holdPhotosRepo.deleteLastPhoto({ shiftId: session.shiftId, holdId: session.currentHoldId })
+    const lastPhoto = await holdPhotosRepo.findLastPhoto({ shiftId: session.shiftId, holdId: session.currentHoldId })
 
-    if (deleted) {
-      await storage.deleteStoredFile({ diskPath: deleted.disk_path })
+    if (!lastPhoto) {
+      return
     }
+
+    const directusId = extractDirectusId(lastPhoto.disk_public_url)
+
+    if (directusUploader && directusId) {
+      await directusUploader.deleteFile(directusId)
+    }
+
+    await holdPhotosRepo.deletePhotoById(lastPhoto.id)
   } catch (error) {
     logger.error('Не удалось удалить последнее фото трюма', { error: error.message })
     await bot.sendMessage(chatId, messages.systemError)
@@ -490,26 +514,31 @@ function extractLargestPhotoId(photos) {
   return sorted[sorted.length - 1]?.file_id || null
 }
 
-// TODO: Review for merge — формируем части пути по правилам и экранируем спецсимволы
-function buildLogicalPathParts({ shiftDate, shipName, holdNumber, shiftId, holdId }) {
-  const date = new Date(shiftDate)
-  const year = date.getUTCFullYear()
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
-  const day = String(date.getUTCDate()).padStart(2, '0')
-  const shipSegment = sanitizePathPart(shipName)
-  const shiftFolder = `shift_${shiftId}_${shipSegment}`
-  const holdFolder = `hold_${holdId}`
-  return [year.toString(), month, day, shiftFolder, holdFolder]
+// TODO: Review for merge — скачиваем файл из Telegram для последующей загрузки в Directus
+async function downloadFromTelegram(bot, fileId) {
+  const fileLink = await bot.getFileLink(fileId)
+  const fileInfo = await bot.getFile(fileId)
+  const fileName = require('path').basename(fileInfo?.file_path || `photo-${Date.now()}.jpg`)
+  const mimeType = fileInfo?.mime_type || 'image/jpeg'
+
+  const response = await fetch(fileLink)
+
+  if (!response.ok) {
+    throw new Error(`Ошибка загрузки файла Telegram: ${response.status}`)
+  }
+
+  const arrayBuffer = await response.arrayBuffer()
+  return { buffer: Buffer.from(arrayBuffer), fileName, mimeType }
 }
 
-// TODO: Review for merge — санитария сегментов пути
-function sanitizePathPart(part) {
-  return String(part || '')
-    .trim()
-    .replace(/[\\/]+/g, '-')
-    .replace(/\s+/g, ' ')
-    .replace(/[^\wА-Яа-яЁё\s\-]/g, '')
-    .trim()
+// TODO: Review for merge — извлекаем идентификатор файла Directus из asset-URL
+function extractDirectusId(publicUrl) {
+  if (!publicUrl) {
+    return null
+  }
+
+  const match = String(publicUrl).match(/\/assets\/([\w-]+)/)
+  return match?.[1] || null
 }
 
 module.exports = { registerPhotosModule }

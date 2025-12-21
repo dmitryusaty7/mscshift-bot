@@ -12,7 +12,7 @@ const { registerExpensesModule } = require('../modules/expenses')
 const { registerPhotosModule } = require('../modules/photos')
 
 // Создаём экземпляр бота и регистрируем обработчики
-function createBot({ token, logger, repositories, messages, directusClient, uploadsDir }) {
+function createBot({ token, logger, repositories, messages, directusClient, directusConfig }) {
   const bot = new TelegramBot(token, { polling: true })
 
   const crewModule = registerCrewModule({
@@ -72,6 +72,20 @@ function createBot({ token, logger, repositories, messages, directusClient, uplo
     holdPhotosRepo: repositories.holdPhotos,
     brigadiersRepo: repositories.brigadiers,
     uploadsDir,
+    openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
+      openShiftMenu({ bot, chatId, telegramId, brigadier, shift, messages, logger }),
+  })
+
+  // TODO: Review for merge — подключаем блок фото трюмов
+  const photosModule = registerPhotosModule({
+    bot,
+    logger,
+    messages,
+    shiftsRepo: repositories.shifts,
+    holdsRepo: repositories.holds,
+    holdPhotosRepo: repositories.holdPhotos,
+    brigadiersRepo: repositories.brigadiers,
+    directusConfig,
     openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
       openShiftMenu({ bot, chatId, telegramId, brigadier, shift, messages, logger }),
   })

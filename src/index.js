@@ -56,6 +56,7 @@ async function bootstrap() {
       }, logger)
     : null
 
+  // TODO: Review for merge — передаём конфигурацию Directus в бота для загрузки фото
   createBot({
     token: config.bot.token,
     logger,
@@ -72,7 +73,7 @@ async function bootstrap() {
     },
     messages,
     directusClient,
-    uploadsDir: config.uploadsDir,
+    directusConfig: config.directus,
   })
 
   logger.info('Бот MSCShift запущен и готов принимать команды')
