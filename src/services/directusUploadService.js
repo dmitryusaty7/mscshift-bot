@@ -1,4 +1,6 @@
 // TODO: Review for merge — сервис загрузки фото трюмов в Directus через REST API
+const FormData = require('form-data')
+
 function createDirectusUploadService({ baseUrl, token, logger }) {
   // Фото НЕ сохраняются напрямую на диск. Directus управляет хранением файлов самостоятельно через API.
   if (!baseUrl || !token) {
@@ -12,8 +14,10 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
       const effectiveMimeType = mimeType || 'image/jpeg'
       const targetFolderId = await resolveTargetFolder({ folderId, shiftId, holdId, date })
 
-      const fileBlob = new Blob([buffer], { type: effectiveMimeType })
-      form.append('file', fileBlob, filename || 'photo.jpg')
+      form.append('file', buffer, {
+        filename: filename || 'photo.jpg',
+        contentType: effectiveMimeType,
+      })
 
       if (title) {
         form.append('title', title)
@@ -38,6 +42,7 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
+          ...form.getHeaders(),
         },
         body: form,
       })
@@ -243,4 +248,4 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
   return { uploadFile, uploadBuffer, deleteFile, getOrCreateFolder, ensureHoldFolder }
 }
 
-module.exports = { createDirectusUploadService }
+  module.exports = { createDirectusUploadService }
