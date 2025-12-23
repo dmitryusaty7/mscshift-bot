@@ -302,6 +302,8 @@ function registerPhotosModule({
       let diskPublicUrl = null
 
       if (directusUploader && directusFolders) {
+        let folderId = process.env.DIRECTUS_UPLOAD_FOLDER_ID
+
         try {
           if (logger) {
             logger.info('Начата загрузка фото в Directus', {
@@ -311,7 +313,7 @@ function registerPhotosModule({
             })
           }
 
-          const folderId = await directusFolders.resolveHoldFolder({
+          folderId = await directusFolders.resolveHoldFolder({
             shiftId: session.shiftId,
             shiftName: session.shipName,
             holdId: session.currentHoldId,
@@ -321,7 +323,17 @@ function registerPhotosModule({
           if (logger) {
             logger.info('Папка Directus для фото трюма получена', { folderId })
           }
+        } catch (folderError) {
+          if (logger) {
+            logger.error('Не удалось построить иерархию папок Directus, используем корень', {
+              error: folderError.message,
+              shiftId: session.shiftId,
+              holdId: session.currentHoldId,
+            })
+          }
+        }
 
+        try {
           const uploaded = await directusUploader.uploadFile({
             buffer: downloaded.buffer,
             filename: downloaded.fileName,
