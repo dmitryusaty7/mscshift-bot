@@ -2,6 +2,7 @@ const path = require('path')
 const fs = require('fs/promises')
 const { USER_STATES, setUserState, getUserState } = require('../bot/middlewares/session')
 const { createDirectusUploadService } = require('../services/directusUploadService')
+const { createDirectusFolderService } = require('../services/directusFolderService')
 
 // TODO: Review for merge — шаги сценария фото трюмов
 const PHOTO_STEPS = {
@@ -28,12 +29,20 @@ function registerPhotosModule({
   openShiftMenu,
 }) {
   let directusUploader = null
+  let directusFolders = null
 
   if (directusConfig) {
     try {
       directusUploader = createDirectusUploadService({
         baseUrl: directusConfig.baseUrl,
         token: directusConfig.token,
+        logger,
+      })
+
+      directusFolders = createDirectusFolderService({
+        baseUrl: directusConfig.baseUrl,
+        token: directusConfig.token,
+        rootFolderId: process.env.DIRECTUS_UPLOAD_FOLDER_ID,
         logger,
       })
     } catch (error) {
@@ -292,7 +301,7 @@ function registerPhotosModule({
       let diskPath = localPath
       let diskPublicUrl = null
 
-      if (directusUploader) {
+      if (directusUploader && directusFolders) {
         try {
           if (logger) {
             logger.info('Начата загрузка фото в Directus', {
@@ -302,8 +311,9 @@ function registerPhotosModule({
             })
           }
 
-          const folderId = await directusUploader.ensureHoldFolder({
+          const folderId = await directusFolders.resolveHoldFolder({
             shiftId: session.shiftId,
+            shiftName: session.shipName,
             holdId: session.currentHoldId,
             date: new Date(),
           })
@@ -314,9 +324,6 @@ function registerPhotosModule({
             title: `Shift ${session.shiftId} / Hold ${session.currentHoldId}`,
             mimeType: downloaded.mimeType,
             folderId,
-            shiftId: session.shiftId,
-            holdId: session.currentHoldId,
-            date: new Date(),
           })
 
           diskPath = `/assets/${uploaded.fileId}`
