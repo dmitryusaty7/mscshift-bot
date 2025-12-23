@@ -302,11 +302,21 @@ function registerPhotosModule({
             })
           }
 
+          const folderId = await directusUploader.ensureHoldFolder({
+            shiftId: session.shiftId,
+            holdId: session.currentHoldId,
+            date: new Date(),
+          })
+
           const uploaded = await directusUploader.uploadFile({
             buffer: downloaded.buffer,
             filename: downloaded.fileName,
             title: `Shift ${session.shiftId} / Hold ${session.currentHoldId}`,
             mimeType: downloaded.mimeType,
+            folderId,
+            shiftId: session.shiftId,
+            holdId: session.currentHoldId,
+            date: new Date(),
           })
 
           diskPath = `/assets/${uploaded.fileId}`
