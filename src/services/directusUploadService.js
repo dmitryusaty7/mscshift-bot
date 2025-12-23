@@ -16,9 +16,17 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
 
       const form = new FormData()
       const effectiveMimeType = mimeType || 'image/jpeg'
+      const resolvedFilename = filename || 'photo.jpg'
+
+      logger.info('Начало загрузки файла в Directus', {
+        folderId,
+        filename: resolvedFilename,
+        mimeType: effectiveMimeType,
+        bufferSize: buffer?.length,
+      })
 
       form.append('file', buffer, {
-        filename: filename || 'photo.jpg',
+        filename: resolvedFilename,
         contentType: effectiveMimeType,
       })
 
@@ -35,7 +43,6 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
       }
 
       form.append('folder', String(folderId))
-      logger.info('Загрузка файла в папку Directus', { folderId })
 
       const response = await fetch(`${baseUrl}/files`, {
         method: 'POST',
@@ -49,6 +56,8 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
       const payload = await safeJson(response)
 
       logger.info('Ответ Directus на загрузку файла', {
+        status: response.status,
+        statusText: response.statusText,
         payloadKeys: payload ? Object.keys(payload) : null,
         dataKeys: payload?.data ? Object.keys(payload.data) : null,
         dataId: payload?.data?.id,
