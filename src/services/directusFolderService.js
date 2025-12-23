@@ -13,15 +13,15 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
   async function resolveHoldFolder({ shiftId, shiftName, holdId, date }) {
     const currentDate = date ? new Date(date) : new Date()
     const year = String(currentDate.getFullYear())
-    const month = String(currentDate.getMonth() + 1).padStart(2, '0')
+    const month = getRussianMonthName(currentDate.getMonth())
     const day = String(currentDate.getDate()).padStart(2, '0')
 
     const segments = [
       year,
       month,
       day,
-      `shift_${shiftId}_${sanitizeName(shiftName)}`,
-      `hold_${holdId}`,
+      `Смена ${shiftId} Судно ${sanitizeName(shiftName)}`,
+      `Трюм ${holdId}`,
     ]
 
     if (logger) {
@@ -145,6 +145,25 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
     }
 
     return base.replace(/[\\/]/g, '_')
+  }
+
+  function getRussianMonthName(index) {
+    const months = [
+      'Январь',
+      'Февраль',
+      'Март',
+      'Апрель',
+      'Май',
+      'Июнь',
+      'Июль',
+      'Август',
+      'Сентябрь',
+      'Октябрь',
+      'Ноябрь',
+      'Декабрь',
+    ]
+
+    return months[index] || 'Неизвестный месяц'
   }
 
   return { resolveHoldFolder }

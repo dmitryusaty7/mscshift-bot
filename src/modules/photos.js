@@ -342,14 +342,17 @@ function registerPhotosModule({
             folderId,
           })
 
-          diskPath = `/assets/${uploaded.id}`
+          const fileId = uploaded.id
+
+          diskPath = `/assets/${fileId}`
           diskPublicUrl = `${directusConfig.baseUrl}${diskPath}`
 
           if (logger) {
             logger.info('Directus успешно принял фото трюма', {
               shiftId: session.shiftId,
               holdId: session.currentHoldId,
-              directusId: uploaded.id,
+              directusId: fileId,
+              folderId,
             })
           }
         } catch (uploadError) {

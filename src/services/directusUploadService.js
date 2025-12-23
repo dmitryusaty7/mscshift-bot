@@ -1,5 +1,6 @@
 // TODO: Review for merge — сервис загрузки фото трюмов в Directus через REST API
 const FormData = require('form-data')
+const path = require('path')
 
 function createDirectusUploadService({ baseUrl, token, logger }) {
   // Фото НЕ сохраняются напрямую на диск. Directus управляет хранением файлов самостоятельно через API.
@@ -10,16 +11,18 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
   // Загружаем файл-буфер в Directus с метаданными. Папка должна быть разрешена заранее.
   async function uploadFile({ buffer, filename, title, mimeType, folderId }) {
     try {
-      if (!folderId) {
+      const targetFolderId = folderId || process.env.DIRECTUS_UPLOAD_FOLDER_ID
+      const effectiveMimeType = mimeType || 'image/jpeg'
+      const resolvedFilename = sanitizeFilename(filename) || 'photo.jpg'
+
+      if (!targetFolderId) {
         throw new Error('Не указан идентификатор папки Directus для загрузки файла')
       }
 
       const form = new FormData()
-      const effectiveMimeType = mimeType || 'image/jpeg'
-      const resolvedFilename = filename || 'photo.jpg'
 
       logger.info('Начало загрузки файла в Directus', {
-        folderId,
+        folderId: targetFolderId,
         filename: resolvedFilename,
         mimeType: effectiveMimeType,
         bufferSize: buffer?.length,
@@ -34,15 +37,7 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
         form.append('title', title)
       }
 
-      if (filename) {
-        form.append('filename_download', filename)
-      }
-
-      if (effectiveMimeType) {
-        form.append('type', effectiveMimeType)
-      }
-
-      form.append('folder', String(folderId))
+      form.append('folder', String(targetFolderId))
 
       const response = await fetch(`${baseUrl}/files`, {
         method: 'POST',
@@ -58,8 +53,6 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
       logger.info('Ответ Directus на загрузку файла', {
         status: response.status,
         statusText: response.statusText,
-        payloadKeys: payload ? Object.keys(payload) : null,
-        dataKeys: payload?.data ? Object.keys(payload.data) : null,
         dataId: payload?.data?.id,
       })
 
@@ -68,13 +61,14 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
           status: response.status,
           statusText: response.statusText,
           payload,
+          errors: payload?.errors,
         })
         throw new Error('Directus не смог принять файл')
       }
 
       const normalized = normalizePayload(payload)
 
-      logger.info('Файл успешно загружен в Directus', { id: normalized.id })
+      logger.info('Файл успешно загружен в Directus', { status: response.status, id: normalized.id })
 
       return normalized
     } catch (error) {
@@ -128,23 +122,30 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
 
   // Приводим ответ Directus к ожидаемой структуре и валидируем id
   function normalizePayload(payload) {
-    const id = payload?.data?.id
+    const data = payload?.data
+    const id = data?.id
 
     if (!id || typeof id !== 'string') {
       logger.error('Directus вернул некорректный ответ при загрузке файла', { payload })
       throw new Error('Directus не вернул идентификатор файла')
     }
 
-    return {
-      id,
-      folder: payload.data.folder || null,
-      title: payload.data.title || null,
-      filename_download: payload.data.filename_download || null,
-      type: payload.data.type || null,
+    return data
+  }
+
+  function sanitizeFilename(name) {
+    const raw = String(name || '').trim()
+
+    if (!raw) {
+      return null
     }
+
+    const base = path.basename(raw)
+
+    return base.replace(/[\\]/g, '_')
   }
 
   return { uploadFile, uploadBuffer, deleteFile }
 }
 
-  module.exports = { createDirectusUploadService }
+module.exports = { createDirectusUploadService }
