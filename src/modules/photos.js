@@ -318,6 +318,10 @@ function registerPhotosModule({
             date: new Date(),
           })
 
+          if (logger) {
+            logger.info('Папка Directus для фото трюма получена', { folderId })
+          }
+
           const uploaded = await directusUploader.uploadFile({
             buffer: downloaded.buffer,
             filename: downloaded.fileName,
@@ -326,14 +330,14 @@ function registerPhotosModule({
             folderId,
           })
 
-          diskPath = `/assets/${uploaded.fileId}`
+          diskPath = `/assets/${uploaded.id}`
           diskPublicUrl = `${directusConfig.baseUrl}${diskPath}`
 
           if (logger) {
             logger.info('Directus успешно принял фото трюма', {
               shiftId: session.shiftId,
               holdId: session.currentHoldId,
-              directusId: uploaded.fileId,
+              directusId: uploaded.id,
             })
           }
         } catch (uploadError) {

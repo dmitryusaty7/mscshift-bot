@@ -48,7 +48,11 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
 
       const payload = await safeJson(response)
 
-      logger.info('Ответ Directus на загрузку файла', { payload })
+      logger.info('Ответ Directus на загрузку файла', {
+        payloadKeys: payload ? Object.keys(payload) : null,
+        dataKeys: payload?.data ? Object.keys(payload.data) : null,
+        dataId: payload?.data?.id,
+      })
 
       if (!response.ok) {
         logger.error('Directus вернул ошибку при загрузке файла', {
@@ -59,12 +63,11 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
         throw new Error('Directus не смог принять файл')
       }
 
-      const fileId = validateFileId(payload)
-      const filenameDisk = typeof payload?.data?.filename_disk === 'string' ? payload.data.filename_disk : null
+      const normalized = normalizePayload(payload)
 
-      logger.info('Файл успешно загружен в Directus', { fileId })
+      logger.info('Файл успешно загружен в Directus', { id: normalized.id })
 
-      return { fileId, filenameDisk }
+      return normalized
     } catch (error) {
       logger.error('Сбой загрузки фото в Directus', { error: error.message })
       throw error
@@ -114,14 +117,22 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
     }
   }
 
-  // Валидация payload с ответом о создании файла
-  function validateFileId(payload) {
-    if (payload?.data?.id && typeof payload.data.id === 'string') {
-      return payload.data.id
+  // Приводим ответ Directus к ожидаемой структуре и валидируем id
+  function normalizePayload(payload) {
+    const id = payload?.data?.id
+
+    if (!id || typeof id !== 'string') {
+      logger.error('Directus вернул некорректный ответ при загрузке файла', { payload })
+      throw new Error('Directus не вернул идентификатор файла')
     }
 
-    logger.error('Directus вернул некорректный ответ при загрузке файла', { payload })
-    throw new Error('Directus не вернул идентификатор файла')
+    return {
+      id,
+      folder: payload.data.folder || null,
+      title: payload.data.title || null,
+      filename_download: payload.data.filename_download || null,
+      type: payload.data.type || null,
+    }
   }
 
   return { uploadFile, uploadBuffer, deleteFile }

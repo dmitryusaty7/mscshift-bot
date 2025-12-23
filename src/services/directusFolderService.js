@@ -1,137 +1,153 @@
-// Сервис работы с папками Directus: поиск, создание и построение иерархии трюмов
-const { URLSearchParams } = require('url')
-
-function createDirectusFolderService({ baseUrl, token, logger, rootFolderId }) {
+// Сервис работы с иерархией папок Directus для загрузки фото трюмов
+function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
   if (!baseUrl || !token) {
     throw new Error('Directus не настроен: требуется DIRECTUS_URL и DIRECTUS_TOKEN')
   }
 
-  const authHeader = { Authorization: `Bearer ${token}` }
-
-  async function getOrCreateFolder({ name, parentId }) {
-    if (!name || typeof name !== 'string') {
-      throw new Error('Имя папки Directus не задано')
-    }
-
-    const searchParams = new URLSearchParams()
-    searchParams.set('filter[name][_eq]', name)
-    searchParams.set('limit', '1')
-
-    if (parentId) {
-      searchParams.set('filter[parent][_eq]', parentId)
-    } else {
-      searchParams.set('filter[parent][_null]', 'true')
-    }
-
-    const searchResponse = await fetch(`${baseUrl}/folders?${searchParams.toString()}`, {
-      method: 'GET',
-      headers: authHeader,
-    })
-
-    const searchPayload = await safeJson(searchResponse)
-
-    if (!searchResponse.ok) {
-      logDirectusError('поиск папки', searchResponse, searchPayload, { name, parentId })
-      throw new Error('Directus вернул ошибку при поиске папки')
-    }
-
-    const existing = Array.isArray(searchPayload?.data) ? searchPayload.data[0] : null
-
-    if (existing?.id) {
-      logger.info('Папка Directus найдена', { name, parentId: parentId || null, folderId: existing.id })
-      return existing.id
-    }
-
-    const createResponse = await fetch(`${baseUrl}/folders`, {
-      method: 'POST',
-      headers: {
-        ...authHeader,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ name, parent: parentId || null }),
-    })
-
-    const createPayload = await safeJson(createResponse)
-
-    if (!createResponse.ok) {
-      logDirectusError('создание папки', createResponse, createPayload, { name, parentId })
-      throw new Error('Directus вернул ошибку при создании папки')
-    }
-
-    const folderId = validateFolderId(createPayload)
-    logger.info('Папка Directus создана', { name, parentId: parentId || null, folderId })
-    return folderId
+  if (!rootFolderId) {
+    throw new Error('Не указан корневой идентификатор папки Directus (DIRECTUS_UPLOAD_FOLDER_ID)')
   }
 
-  async function resolveHoldFolder({ date = new Date(), shiftId, shiftName, holdId, rootId }) {
-    if (!shiftId || !holdId) {
-      throw new Error('Для построения пути папок требуется shiftId и holdId')
+  const cache = new Map()
+
+  async function resolveHoldFolder({ shiftId, shiftName, holdId, date }) {
+    const currentDate = date ? new Date(date) : new Date()
+    const year = String(currentDate.getFullYear())
+    const month = String(currentDate.getMonth() + 1).padStart(2, '0')
+    const day = String(currentDate.getDate()).padStart(2, '0')
+
+    const segments = [
+      year,
+      month,
+      day,
+      `shift_${shiftId}_${sanitizeName(shiftName)}`,
+      `hold_${holdId}`,
+    ]
+
+    if (logger) {
+      logger.info('Разрешение иерархии папок Directus для фото трюма', { segments, rootFolderId })
     }
 
-    const baseFolderId = rootId || rootFolderId || process.env.DIRECTUS_UPLOAD_FOLDER_ID || null
+    let parentId = String(rootFolderId)
 
-    if (!baseFolderId) {
-      throw new Error('Не указан DIRECTUS_UPLOAD_FOLDER_ID для корневой папки Directus')
+    for (const segment of segments) {
+      parentId = await resolveOrCreate(segment, parentId)
     }
 
-    const yearFolder = await getOrCreateFolder({ parentId: baseFolderId, name: String(date.getFullYear()) })
-    const monthFolder = await getOrCreateFolder({ parentId: yearFolder, name: String(date.getMonth() + 1).padStart(2, '0') })
-    const dayFolder = await getOrCreateFolder({ parentId: monthFolder, name: String(date.getDate()).padStart(2, '0') })
+    return parentId
+  }
 
-    const shiftNameSuffix = normalizeFolderName(shiftName)
-    const shiftFolderName = shiftNameSuffix ? `shift_${shiftId}_${shiftNameSuffix}` : `shift_${shiftId}`
-    const shiftFolder = await getOrCreateFolder({ parentId: dayFolder, name: shiftFolderName })
+  async function resolveOrCreate(name, parentId) {
+    const key = `${parentId}:${name}`
 
-    const holdFolder = await getOrCreateFolder({ parentId: shiftFolder, name: `hold_${holdId}` })
+    if (cache.has(key)) {
+      return cache.get(key)
+    }
 
-    logger.info('Иерархия папок Directus подготовлена', {
-      rootFolderId: baseFolderId,
-      yearFolder,
-      monthFolder,
-      dayFolder,
-      shiftFolder,
-      holdFolder,
+    const existing = await findFolder(name, parentId)
+
+    if (existing) {
+      cache.set(key, existing)
+      return existing
+    }
+
+    const created = await createFolder(name, parentId)
+    cache.set(key, created)
+    return created
+  }
+
+  async function findFolder(name, parentId) {
+    const params = new URLSearchParams()
+    params.set('filter[parent][_eq]', parentId)
+    params.set('filter[name][_eq]', name)
+
+    const response = await fetch(`${baseUrl}/folders?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     })
 
-    return holdFolder
+    const payload = await safeJson(response)
+
+    if (logger) {
+      logger.info('Ответ Directus при поиске папки', {
+        name,
+        parentId,
+        status: response.status,
+        dataLength: Array.isArray(payload?.data) ? payload.data.length : null,
+      })
+    }
+
+    if (!response.ok) {
+      throw new Error(`Directus не смог проверить существование папки ${name}`)
+    }
+
+    const foundId = payload?.data?.[0]?.id
+    return foundId ? String(foundId) : null
+  }
+
+  async function createFolder(name, parentId) {
+    if (logger) {
+      logger.info('Создание папки Directus', { name, parentId })
+    }
+
+    const response = await fetch(`${baseUrl}/folders`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name, parent: parentId }),
+    })
+
+    const payload = await safeJson(response)
+
+    if (logger) {
+      logger.info('Ответ Directus на создание папки', {
+        name,
+        parentId,
+        status: response.status,
+        dataId: payload?.data?.id,
+      })
+    }
+
+    if (!response.ok) {
+      throw new Error(`Directus не смог создать папку ${name}`)
+    }
+
+    const id = payload?.data?.id
+
+    if (!id) {
+      throw new Error('Directus вернул некорректный ответ при создании папки')
+    }
+
+    return String(id)
   }
 
   async function safeJson(response) {
     try {
       return await response.json()
     } catch (error) {
-      logger.warn('Не удалось распарсить ответ Directus как JSON', { error: error.message })
+      if (logger) {
+        logger.warn('Не удалось распарсить ответ Directus как JSON', { error: error.message })
+      }
+
       return null
     }
   }
 
-  function validateFolderId(payload) {
-    if (payload?.data?.id && typeof payload.data.id === 'string') {
-      return payload.data.id
+  function sanitizeName(value) {
+    const base = String(value || '').trim()
+
+    if (!base) {
+      return 'unknown'
     }
 
-    logger.error('Directus вернул некорректный ответ при создании папки', { payload })
-    throw new Error('Directus не вернул идентификатор папки')
+    return base.replace(/[\\/]/g, '_')
   }
 
-  function logDirectusError(action, response, payload, meta = {}) {
-    logger.error(`Directus не смог выполнить ${action}`, {
-      status: response.status,
-      statusText: response.statusText,
-      payload,
-      ...meta,
-    })
-  }
-
-  function normalizeFolderName(raw) {
-    if (!raw || typeof raw !== 'string') {
-      return ''
-    }
-
-    return raw.trim().replace(/[\\/]/g, '-').replace(/\s+/g, ' ')
-  }
-
-  return { getOrCreateFolder, resolveHoldFolder }
+  return { resolveHoldFolder }
 }
 
 module.exports = { createDirectusFolderService }
