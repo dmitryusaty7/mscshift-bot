@@ -12,7 +12,8 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
       const effectiveMimeType = mimeType || 'image/jpeg'
       const targetFolderId = await resolveTargetFolder({ folderId, shiftId, holdId, date })
 
-      form.append('file', new Blob([buffer]), filename || 'photo.jpg', { type: effectiveMimeType })
+      const fileBlob = new Blob([buffer], { type: effectiveMimeType })
+      form.append('file', fileBlob, filename || 'photo.jpg')
 
       if (title) {
         form.append('title', title)
@@ -147,6 +148,10 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
     }
 
     const baseFolderId = rootFolderId || process.env.DIRECTUS_UPLOAD_FOLDER_ID || null
+
+    if (!baseFolderId) {
+      throw new Error('Не указан базовый идентификатор папки Directus (DIRECTUS_UPLOAD_FOLDER_ID)')
+    }
     const yearFolder = await getOrCreateFolder(baseFolderId, String(date.getFullYear()))
     const monthFolder = await getOrCreateFolder(yearFolder, String(date.getMonth() + 1).padStart(2, '0'))
     const dayFolder = await getOrCreateFolder(monthFolder, String(date.getDate()).padStart(2, '0'))
