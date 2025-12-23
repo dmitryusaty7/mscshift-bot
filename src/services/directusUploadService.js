@@ -1,18 +1,26 @@
 // TODO: Review for merge — сервис загрузки фото трюмов в Directus через REST API
+const FormData = require('form-data')
+
 function createDirectusUploadService({ baseUrl, token, logger }) {
   // Фото НЕ сохраняются напрямую на диск. Directus управляет хранением файлов самостоятельно через API.
   if (!baseUrl || !token) {
     throw new Error('Directus не настроен: требуется DIRECTUS_URL и DIRECTUS_TOKEN')
   }
 
-  // TODO: Review for merge — загружаем файл-буфер в Directus с метаданными
+  // Загружаем файл-буфер в Directus с метаданными. Папка должна быть разрешена заранее.
   async function uploadFile({ buffer, filename, title, mimeType, folderId }) {
     try {
+      if (!folderId) {
+        throw new Error('Не указан идентификатор папки Directus для загрузки файла')
+      }
+
       const form = new FormData()
       const effectiveMimeType = mimeType || 'image/jpeg'
-      const targetFolderId = folderId || process.env.DIRECTUS_UPLOAD_FOLDER_ID
 
-      form.append('file', new Blob([buffer]), filename || 'photo.jpg', { type: effectiveMimeType })
+      form.append('file', buffer, {
+        filename: filename || 'photo.jpg',
+        contentType: effectiveMimeType,
+      })
 
       if (title) {
         form.append('title', title)
@@ -26,19 +34,21 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
         form.append('type', effectiveMimeType)
       }
 
-      if (targetFolderId) {
-        form.append('folder', targetFolderId)
-      }
+      form.append('folder', String(folderId))
+      logger.info('Загрузка файла в папку Directus', { folderId })
 
       const response = await fetch(`${baseUrl}/files`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
+          ...form.getHeaders(),
         },
         body: form,
       })
 
       const payload = await safeJson(response)
+
+      logger.info('Ответ Directus на загрузку файла', { payload })
 
       if (!response.ok) {
         logger.error('Directus вернул ошибку при загрузке файла', {
@@ -49,12 +59,10 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
         throw new Error('Directus не смог принять файл')
       }
 
-      const fileId = payload?.data?.id
-      const filenameDisk = payload?.data?.filename_disk
+      const fileId = validateFileId(payload)
+      const filenameDisk = typeof payload?.data?.filename_disk === 'string' ? payload.data.filename_disk : null
 
-      if (!fileId) {
-        throw new Error('Directus не вернул идентификатор файла')
-      }
+      logger.info('Файл успешно загружен в Directus', { fileId })
 
       return { fileId, filenameDisk }
     } catch (error) {
@@ -63,12 +71,12 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
     }
   }
 
-  // TODO: Review for merge — обёртка для старого вызова без метаданных
-  async function uploadBuffer({ buffer, filename, mimeType }) {
-    return uploadFile({ buffer, filename, mimeType })
+  // Обёртка для старого вызова без метаданных
+  async function uploadBuffer({ buffer, filename, mimeType, folderId }) {
+    return uploadFile({ buffer, filename, mimeType, folderId })
   }
 
-  // TODO: Review for merge — удаляем файл в Directus по идентификатору
+  // Удаляем файл в Directus по идентификатору
   async function deleteFile(fileId) {
     if (!fileId) {
       return
@@ -96,7 +104,7 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
     }
   }
 
-  // TODO: Review for merge — безопасно парсим JSON для диагностики
+  // Безопасно парсим JSON для диагностики
   async function safeJson(response) {
     try {
       return await response.json()
@@ -104,6 +112,16 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
       logger.warn('Не удалось распарсить ответ Directus как JSON', { error: error.message })
       return null
     }
+  }
+
+  // Валидация payload с ответом о создании файла
+  function validateFileId(payload) {
+    if (payload?.data?.id && typeof payload.data.id === 'string') {
+      return payload.data.id
+    }
+
+    logger.error('Directus вернул некорректный ответ при загрузке файла', { payload })
+    throw new Error('Directus не вернул идентификатор файла')
   }
 
   return { uploadFile, uploadBuffer, deleteFile }
