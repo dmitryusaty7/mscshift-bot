@@ -127,4 +127,4 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
   return { uploadFile, uploadBuffer, deleteFile }
 }
 
-module.exports = { createDirectusUploadService }
+  module.exports = { createDirectusUploadService }
