@@ -5,12 +5,12 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
     throw new Error('Directus не настроен: требуется DIRECTUS_URL и DIRECTUS_TOKEN')
   }
 
-  // TODO: Review for merge — загружаем файл-буфер в Directus с метаданными
-  async function uploadFile({ buffer, filename, title, mimeType, folderId }) {
+  // Загружаем файл-буфер в Directus с метаданными и поддержкой вложенных папок
+  async function uploadFile({ buffer, filename, title, mimeType, folderId, shiftId, holdId, date }) {
     try {
       const form = new FormData()
       const effectiveMimeType = mimeType || 'image/jpeg'
-      const targetFolderId = folderId || process.env.DIRECTUS_UPLOAD_FOLDER_ID
+      const targetFolderId = await resolveTargetFolder({ folderId, shiftId, holdId, date })
 
       form.append('file', new Blob([buffer]), filename || 'photo.jpg', { type: effectiveMimeType })
 
@@ -27,7 +27,10 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
       }
 
       if (targetFolderId) {
-        form.append('folder', targetFolderId)
+        form.append('folder', String(targetFolderId))
+        logger.info('Загрузка файла в папку Directus', { folderId: targetFolderId })
+      } else {
+        logger.warn('Папка загрузки Directus не указана, файл попадёт в корень', {})
       }
 
       const response = await fetch(`${baseUrl}/files`, {
@@ -40,6 +43,8 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
 
       const payload = await safeJson(response)
 
+      logger.info('Ответ Directus на загрузку файла', { payload })
+
       if (!response.ok) {
         logger.error('Directus вернул ошибку при загрузке файла', {
           status: response.status,
@@ -49,12 +54,10 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
         throw new Error('Directus не смог принять файл')
       }
 
-      const fileId = payload?.data?.id
-      const filenameDisk = payload?.data?.filename_disk
+      const fileId = validateFileId(payload)
+      const filenameDisk = typeof payload?.data?.filename_disk === 'string' ? payload.data.filename_disk : null
 
-      if (!fileId) {
-        throw new Error('Directus не вернул идентификатор файла')
-      }
+      logger.info('Файл успешно загружен в Directus', { fileId })
 
       return { fileId, filenameDisk }
     } catch (error) {
@@ -63,12 +66,106 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
     }
   }
 
-  // TODO: Review for merge — обёртка для старого вызова без метаданных
+  // Обёртка для старого вызова без метаданных
   async function uploadBuffer({ buffer, filename, mimeType }) {
     return uploadFile({ buffer, filename, mimeType })
   }
 
-  // TODO: Review for merge — удаляем файл в Directus по идентификатору
+  // Создаём или возвращаем существующую папку в Directus по имени и родителю
+  async function getOrCreateFolder(parentId, name) {
+    if (!name || typeof name !== 'string') {
+      throw new Error('Имя папки для Directus не задано')
+    }
+
+    const searchParams = new URLSearchParams()
+    searchParams.set('filter[name][_eq]', name)
+    searchParams.set('limit', '1')
+
+    if (parentId) {
+      searchParams.set('filter[parent][_eq]', parentId)
+    } else {
+      searchParams.set('filter[parent][_null]', 'true')
+    }
+
+    const searchResponse = await fetch(`${baseUrl}/folders?${searchParams.toString()}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
+
+    const searchPayload = await safeJson(searchResponse)
+
+    if (!searchResponse.ok) {
+      logger.error('Directus вернул ошибку при поиске папки', {
+        status: searchResponse.status,
+        statusText: searchResponse.statusText,
+        parentId,
+        name,
+        payload: searchPayload,
+      })
+      throw new Error('Directus не смог найти папку')
+    }
+
+    const existing = Array.isArray(searchPayload?.data) ? searchPayload.data[0] : null
+
+    if (existing?.id) {
+      return existing.id
+    }
+
+    const createResponse = await fetch(`${baseUrl}/folders`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name, parent: parentId || null }),
+    })
+
+    const createPayload = await safeJson(createResponse)
+
+    if (!createResponse.ok) {
+      logger.error('Directus вернул ошибку при создании папки', {
+        status: createResponse.status,
+        statusText: createResponse.statusText,
+        parentId,
+        name,
+        payload: createPayload,
+      })
+      throw new Error('Directus не смог создать папку')
+    }
+
+    const folderId = validateFolderId(createPayload)
+    logger.info('Создана новая папка в Directus', { folderId, parentId, name })
+    return folderId
+  }
+
+  // Собираем и создаём иерархию папок: год/месяц/день/shift_X/hold_Y
+  async function ensureHoldFolder({ shiftId, holdId, date = new Date(), rootFolderId }) {
+    if (!shiftId || !holdId) {
+      throw new Error('Для построения иерархии папок требуется shiftId и holdId')
+    }
+
+    const baseFolderId = rootFolderId || process.env.DIRECTUS_UPLOAD_FOLDER_ID || null
+    const yearFolder = await getOrCreateFolder(baseFolderId, String(date.getFullYear()))
+    const monthFolder = await getOrCreateFolder(yearFolder, String(date.getMonth() + 1).padStart(2, '0'))
+    const dayFolder = await getOrCreateFolder(monthFolder, String(date.getDate()).padStart(2, '0'))
+    const shiftFolder = await getOrCreateFolder(dayFolder, `shift_${shiftId}`)
+    const holdFolder = await getOrCreateFolder(shiftFolder, `hold_${holdId}`)
+
+    logger.info('Иерархия папок Directus подготовлена', {
+      rootFolderId: baseFolderId,
+      yearFolder,
+      monthFolder,
+      dayFolder,
+      shiftFolder,
+      holdFolder,
+    })
+
+    return holdFolder
+  }
+
+  // Удаляем файл в Directus по идентификатору
   async function deleteFile(fileId) {
     if (!fileId) {
       return
@@ -96,7 +193,7 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
     }
   }
 
-  // TODO: Review for merge — безопасно парсим JSON для диагностики
+  // Безопасно парсим JSON для диагностики
   async function safeJson(response) {
     try {
       return await response.json()
@@ -106,7 +203,39 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
     }
   }
 
-  return { uploadFile, uploadBuffer, deleteFile }
+  // Валидация payload с ответом о создании файла
+  function validateFileId(payload) {
+    if (payload?.data?.id && typeof payload.data.id === 'string') {
+      return payload.data.id
+    }
+
+    logger.error('Directus вернул некорректный ответ при загрузке файла', { payload })
+    throw new Error('Directus не вернул идентификатор файла')
+  }
+
+  // Валидация payload с ответом о создании папки
+  function validateFolderId(payload) {
+    if (payload?.data?.id && typeof payload.data.id === 'string') {
+      return payload.data.id
+    }
+
+    logger.error('Directus вернул некорректный ответ при создании папки', { payload })
+    throw new Error('Directus не вернул идентификатор папки')
+  }
+
+  async function resolveTargetFolder({ folderId, shiftId, holdId, date }) {
+    if (folderId) {
+      return folderId
+    }
+
+    if (shiftId && holdId) {
+      return ensureHoldFolder({ shiftId, holdId, date })
+    }
+
+    return process.env.DIRECTUS_UPLOAD_FOLDER_ID || null
+  }
+
+  return { uploadFile, uploadBuffer, deleteFile, getOrCreateFolder, ensureHoldFolder }
 }
 
 module.exports = { createDirectusUploadService }
