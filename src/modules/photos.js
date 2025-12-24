@@ -18,6 +18,21 @@ const photoSessions = new Map()
 const LOCAL_UPLOADS_DIR = '/opt/mscshift-bot/uploads/holds'
 const DIRECTUS_SHIFT_PHOTOS_COLLECTION = 'shift_photos'
 
+function buildPhotosReplyKeyboard(messages, { showBack = true } = {}) {
+  const rows = []
+
+  if (showBack) {
+    rows.push([{ text: messages.photos.hold.back }])
+  }
+
+  rows.push([{ text: messages.photos.hub.backToShift }])
+
+  return {
+    keyboard: rows,
+    resize_keyboard: true,
+  }
+}
+
 // TODO: Review for merge — регистрация модуля Блока 8 «Фото трюмов»
 function registerPhotosModule({
   bot,
@@ -74,7 +89,7 @@ function registerPhotosModule({
         await bot.answerCallbackQuery(query.id)
         session.step = PHOTO_STEPS.CONFIRM
         photoSessions.set(telegramId, session)
-        await renderConfirmDialog({ bot, chatId, session, messages, directusConfig, logger })
+        await renderConfirmDialog({ bot, chatId, session, messages, directusConfig, logger, holdPhotosRepo })
         return
       }
 
@@ -113,11 +128,11 @@ function registerPhotosModule({
         }
 
         session.currentHoldId = hold.id
-        session.currentHoldNumber = hold.number
+        session.currentHoldNumber = session.holdNumbers?.get(hold.id) || hold.number
         session.step = PHOTO_STEPS.HOLD
         photoSessions.set(telegramId, session)
         await bot.answerCallbackQuery(query.id)
-        await renderHold({ bot, chatId, session, messages, directusConfig, logger })
+        await renderHold({ bot, chatId, session, messages, directusConfig, logger, holdPhotosRepo })
         return
       }
 
@@ -181,7 +196,6 @@ function registerPhotosModule({
             holdsRepo,
             logger,
             withReplyKeyboard: true,
-            directusConfig,
           })
         }
 
@@ -189,7 +203,7 @@ function registerPhotosModule({
       }
 
       if (session.step === PHOTO_STEPS.HUB) {
-        if (msg.text === messages.photos.hub.backToShift) {
+        if (msg.text === messages.photos.hold.back || msg.text === messages.photos.hub.backToShift) {
           // TODO: Review for merge — возврат в меню смены из хаба
           await returnToShiftMenu({
             bot,
@@ -208,7 +222,7 @@ function registerPhotosModule({
       }
 
       if (session.step === PHOTO_STEPS.CONFIRM) {
-        if (msg.text === messages.photos.confirm.back) {
+        if (msg.text === messages.photos.confirm.back || msg.text === messages.photos.hold.back) {
           // TODO: Review for merge — возврат к списку трюмов из подтверждения
           session.step = PHOTO_STEPS.HUB
           session.currentHoldId = null
@@ -222,7 +236,6 @@ function registerPhotosModule({
             holdsRepo,
             logger,
             withReplyKeyboard: true,
-            directusConfig,
           })
           return
         }
@@ -261,7 +274,21 @@ function registerPhotosModule({
             holdsRepo,
             logger,
             withReplyKeyboard: true,
-            directusConfig,
+          })
+          return
+        }
+
+        if (msg.text === messages.photos.hub.backToShift) {
+          await returnToShiftMenu({
+            bot,
+            chatId,
+            telegramId,
+            session,
+            brigadiersRepo,
+            shiftsRepo,
+            messages,
+            logger,
+            openShiftMenu,
           })
           return
         }
@@ -339,7 +366,7 @@ function registerPhotosModule({
 
       if (directusUploader && directusFolders) {
         let folderId = process.env.DIRECTUS_UPLOAD_FOLDER_ID
-        let holdDisplayNumber = session.currentHoldId
+        let holdDisplayNumber = session.currentHoldNumber || session.currentHoldId
 
         try {
           if (logger) {
@@ -433,7 +460,7 @@ function registerPhotosModule({
         })
       }
 
-      await renderHold({ bot, chatId, session, messages, directusConfig, logger })
+      await renderHold({ bot, chatId, session, messages, directusConfig, logger, holdPhotosRepo })
     } catch (error) {
       logger.error('Ошибка сохранения фото трюма', {
         error: error.message,
@@ -499,17 +526,14 @@ function registerPhotosModule({
 async function renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard, directusConfig }) {
   try {
     const holds = await holdsRepo.getHoldsWithCounts(session.shiftId)
-    const directusCounts = await fetchHoldPhotoCountsFromDirectus({
-      shiftId: session.shiftId,
-      holdIds: holds.map((hold) => hold.id),
-      directusConfig,
-      logger,
-    })
+    session.holdNumbers = new Map()
     const inline = []
 
-    holds.forEach((hold) => {
-      const count = directusCounts.get(hold.id) ?? '?'
-      inline.push([{ text: messages.photos.hub.holdButton(hold.number, count), callback_data: `b8:hold:${hold.id}` }])
+    holds.forEach((hold, index) => {
+      const displayNumber = index + 1
+      const count = Number.isInteger(hold.photos_count) ? hold.photos_count : 0
+      session.holdNumbers.set(hold.id, displayNumber)
+      inline.push([{ text: messages.photos.hub.holdButton(displayNumber, count), callback_data: `b8:hold:${hold.id}` }])
     })
 
     inline.push([{ text: messages.photos.hub.confirm, callback_data: 'b8:confirm' }])
@@ -521,11 +545,8 @@ async function renderHub({ bot, chatId, session, messages, holdsRepo, logger, wi
     })
 
     if (withReplyKeyboard) {
-      await bot.sendMessage(chatId, messages.photos.hub.backToShift, {
-        reply_markup: {
-          keyboard: [[{ text: messages.photos.hub.backToShift }]],
-          resize_keyboard: true,
-        },
+      await bot.sendMessage(chatId, '\u2060', {
+        reply_markup: buildPhotosReplyKeyboard(messages),
       })
     }
   } catch (error) {
@@ -535,26 +556,22 @@ async function renderHub({ bot, chatId, session, messages, holdsRepo, logger, wi
 }
 
 // TODO: Review for merge — отрисовка экрана конкретного трюма
-async function renderHold({ bot, chatId, session, messages, directusConfig, logger }) {
+async function renderHold({ bot, chatId, session, messages, directusConfig, logger, holdPhotosRepo }) {
   try {
-    const counts = await fetchHoldPhotoCountsFromDirectus({
+    const count = await getHoldPhotoCount({
       shiftId: session.shiftId,
-      holdIds: [session.currentHoldId],
-      directusConfig,
+      holdId: session.currentHoldId,
+      holdPhotosRepo,
       logger,
     })
-    const count = counts.get(session.currentHoldId) ?? '?'
     const text = messages.photos.hold.title(session.currentHoldNumber, count)
 
     // TODO: Review for merge — пользователь добавляет фото напрямую в чат, отдельная кнопка не нужна
+    const replyMarkup = buildPhotosReplyKeyboard(messages)
+    replyMarkup.keyboard.unshift([{ text: messages.photos.hold.removeLast }])
+
     await bot.sendMessage(chatId, text, {
-      reply_markup: {
-        keyboard: [
-          [{ text: messages.photos.hold.removeLast }],
-          [{ text: messages.photos.hold.back }],
-        ],
-        resize_keyboard: true,
-      },
+      reply_markup: replyMarkup,
     })
   } catch (error) {
     logger.error('Не удалось отрисовать экран трюма', { error: error.message })
@@ -563,13 +580,16 @@ async function renderHold({ bot, chatId, session, messages, directusConfig, logg
 }
 
 // TODO: Review for merge — диалог подтверждения фото
-async function renderConfirmDialog({ bot, chatId, session, messages, directusConfig, logger }) {
+async function renderConfirmDialog({ bot, chatId, session, messages, directusConfig, logger, holdPhotosRepo }) {
   try {
-    const totalCount = await fetchTotalPhotoCountFromDirectus({
-      shiftId: session.shiftId,
-      directusConfig,
-      logger,
-    })
+    let totalCount = 0
+
+    try {
+      totalCount = await holdPhotosRepo.countTotalByShift(session.shiftId)
+    } catch (countError) {
+      logger?.error('Не удалось посчитать фото трюмов в БД', { error: countError.message })
+    }
+
     const text = messages.photos.confirm.text(totalCount)
 
     await bot.sendMessage(chatId, text, {
@@ -579,13 +599,7 @@ async function renderConfirmDialog({ bot, chatId, session, messages, directusCon
     })
 
     await bot.sendMessage(chatId, messages.photos.confirm.back, {
-      reply_markup: {
-        keyboard: [
-          [{ text: messages.photos.confirm.back }],
-          [{ text: messages.photos.hub.backToShift }],
-        ],
-        resize_keyboard: true,
-      },
+      reply_markup: buildPhotosReplyKeyboard(messages),
     })
   } catch (error) {
     logger.error('Не удалось отрисовать диалог подтверждения фото', { error: error.message })
@@ -717,9 +731,8 @@ async function removeLastPhoto({
       holdsRepo,
       logger,
       withReplyKeyboard: false,
-      directusConfig,
     })
-    await renderHold({ bot, chatId, session, messages, directusConfig, logger })
+    await renderHold({ bot, chatId, session, messages, directusConfig, logger, holdPhotosRepo })
     await bot.sendMessage(chatId, messages.photos.hold.deleted)
   } catch (error) {
     logger.error('Не удалось удалить последнее фото трюма', {
@@ -728,6 +741,19 @@ async function removeLastPhoto({
       holdId: session.currentHoldId,
     })
     await bot.sendMessage(chatId, messages.systemError)
+  }
+}
+
+async function getHoldPhotoCount({ shiftId, holdId, holdPhotosRepo, logger }) {
+  try {
+    return await holdPhotosRepo.countByHold({ shiftId, holdId })
+  } catch (error) {
+    logger?.error('Не удалось получить количество фото трюма из БД', {
+      error: error.message,
+      shiftId,
+      holdId,
+    })
+    return 0
   }
 }
 
