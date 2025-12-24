@@ -3,6 +3,7 @@ const fs = require('fs/promises')
 const { USER_STATES, setUserState, getUserState } = require('../bot/middlewares/session')
 const { createDirectusUploadService } = require('../services/directusUploadService')
 const { createDirectusFolderService } = require('../services/directusFolderService')
+const { safeDeleteFile } = require('../utils/safe-delete')
 
 // TODO: Review for merge — шаги сценария фото трюмов
 const PHOTO_STEPS = {
@@ -239,10 +240,10 @@ function registerPhotosModule({
             session,
             messages,
             holdPhotosRepo,
+            holdsRepo,
             logger,
             directusUploader,
           })
-          await renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger })
           return
         }
       }
@@ -593,7 +594,16 @@ async function returnToShiftMenu({ bot, chatId, telegramId, session, brigadiersR
 }
 
 // TODO: Review for merge — удаление последнего фото трюма с очисткой в Directus и локальной ФС
-async function removeLastPhoto({ bot, chatId, session, messages, holdPhotosRepo, logger, directusUploader }) {
+async function removeLastPhoto({
+  bot,
+  chatId,
+  session,
+  messages,
+  holdPhotosRepo,
+  holdsRepo,
+  logger,
+  directusUploader,
+}) {
   try {
     const lastPhoto = await holdPhotosRepo.findLastPhoto({ shiftId: session.shiftId, holdId: session.currentHoldId })
 
@@ -603,34 +613,52 @@ async function removeLastPhoto({ bot, chatId, session, messages, holdPhotosRepo,
 
     const directusId = extractDirectusId(lastPhoto.disk_public_url || lastPhoto.disk_path)
 
-    if (directusUploader && directusId) {
-      await directusUploader.deleteFile(directusId)
+    if (directusUploader) {
+      if (directusId) {
+        logger?.info('Запрашиваем удаление файла в Directus', {
+          shiftId: session.shiftId,
+          holdId: session.currentHoldId,
+          fileId: directusId,
+        })
+
+        await directusUploader.deleteFile(directusId)
+      } else {
+        logger?.warn('Не найден идентификатор файла Directus при удалении фото', {
+          shiftId: session.shiftId,
+          holdId: session.currentHoldId,
+          holdPhotoId: lastPhoto.id,
+        })
+      }
+    }
+
+    if (lastPhoto.disk_path && !isAssetPath(lastPhoto.disk_path)) {
+      await safeDeleteFile({
+        filePath: lastPhoto.disk_path,
+        logger,
+        meta: {
+          shiftId: session.shiftId,
+          holdId: session.currentHoldId,
+          fileId: directusId || lastPhoto.id,
+        },
+      })
     }
 
     await holdPhotosRepo.deletePhotoById(lastPhoto.id)
+    logger?.info('Запись фото трюма удалена из БД', {
+      shiftId: session.shiftId,
+      holdId: session.currentHoldId,
+      fileId: directusId || lastPhoto.id,
+    })
 
-    if (lastPhoto.disk_path && !isAssetPath(lastPhoto.disk_path)) {
-      try {
-        await fs.rm(lastPhoto.disk_path, { force: true })
-
-        if (logger) {
-          logger.info('Локальный файл фото трюма удалён', {
-            shiftId: session.shiftId,
-            holdId: session.currentHoldId,
-            path: lastPhoto.disk_path,
-          })
-        }
-      } catch (fsError) {
-        if (logger) {
-          logger.error('Не удалось удалить локальный файл фото трюма', {
-            error: fsError.message,
-            path: lastPhoto.disk_path,
-          })
-        }
-      }
-    }
+    await renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard: false })
+    await renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger })
+    await bot.sendMessage(chatId, messages.photos.hold.deleted)
   } catch (error) {
-    logger.error('Не удалось удалить последнее фото трюма', { error: error.message })
+    logger.error('Не удалось удалить последнее фото трюма', {
+      error: error.message,
+      shiftId: session.shiftId,
+      holdId: session.currentHoldId,
+    })
     await bot.sendMessage(chatId, messages.systemError)
   }
 }
