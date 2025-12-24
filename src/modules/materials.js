@@ -249,16 +249,7 @@ async function renderMaterialsHub({ bot, chatId, telegramId, materialsRepo, mess
       return
     }
 
-    const textLines = [
-      messages.materials.hub.title,
-      '',
-      `${messages.materials.hub.pvd3}: ${materials.pvd_3m_used ?? 0}`,
-      `${messages.materials.hub.pvd6}: ${materials.pvd_6m_used ?? 0}`,
-      `${messages.materials.hub.pvd12}: ${materials.pvd_12m_used ?? 0}`,
-      `${messages.materials.hub.pvd14}: ${materials.pvd_14m_used ?? 0}`,
-      `${messages.materials.hub.tubes}: ${materials.pvh_tubes_used ?? 0}`,
-      `${messages.materials.hub.tape}: ${materials.tape_used ?? 0}`,
-    ]
+    const textLines = [messages.materials.hub.title, '', messages.materials.hub.description]
 
     const inlineKeyboard = [
       [

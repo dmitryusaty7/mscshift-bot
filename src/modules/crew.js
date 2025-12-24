@@ -755,8 +755,8 @@ async function completeCrewFlow({ chatId, telegramId, session, bot, brigadiersRe
 // Русский комментарий: строим inline-клавиатуру хаба
 function buildHubKeyboard({ crew, ready, messages }) {
   const keyboard = [
-    [{ text: messages.crew.buttons.deputy, callback_data: 'crew:deputy' }],
     [{ text: messages.crew.buttons.driver, callback_data: 'crew:driver' }],
+    [{ text: messages.crew.buttons.deputy, callback_data: 'crew:deputy' }],
     [{ text: messages.crew.buttons.workers, callback_data: 'crew:workers' }],
   ]
 
