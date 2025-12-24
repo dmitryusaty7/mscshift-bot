@@ -698,43 +698,13 @@ async function removeLastPhoto({
       return
     }
 
-    const directusId = extractDirectusId(lastPhoto.disk_public_url || lastPhoto.disk_path)
-
-    if (directusUploader) {
-      if (directusId) {
-        logger?.info('Запрашиваем удаление файла в Directus', {
-          shiftId: session.shiftId,
-          holdId: session.currentHoldId,
-          fileId: directusId,
-        })
-
-        await directusUploader.deleteFile(directusId)
-      } else {
-        logger?.warn('Не найден идентификатор файла Directus при удалении фото', {
-          shiftId: session.shiftId,
-          holdId: session.currentHoldId,
-          holdPhotoId: lastPhoto.id,
-        })
-      }
-    }
-
-    if (lastPhoto.disk_path && !isAssetPath(lastPhoto.disk_path)) {
-      await safeDeleteFile({
-        filePath: lastPhoto.disk_path,
-        logger,
-        meta: {
-          shiftId: session.shiftId,
-          holdId: session.currentHoldId,
-          fileId: directusId || lastPhoto.id,
-        },
-      })
-    }
-
-    await holdPhotosRepo.deletePhotoById(lastPhoto.id)
-    logger?.info('Запись фото трюма удалена из БД', {
+    await deleteHoldPhotoSafely({
+      photo: lastPhoto,
       shiftId: session.shiftId,
       holdId: session.currentHoldId,
-      fileId: directusId || lastPhoto.id,
+      directusUploader,
+      holdPhotosRepo,
+      logger,
     })
 
     await renderHub({
@@ -748,7 +718,6 @@ async function removeLastPhoto({
       withReplyKeyboard: false,
     })
     await renderHold({ bot, chatId, session, messages, directusConfig, logger, holdPhotosRepo })
-    await bot.sendMessage(chatId, messages.photos.hold.deleted)
   } catch (error) {
     logger.error('Не удалось удалить последнее фото трюма', {
       error: error.message,
@@ -756,6 +725,49 @@ async function removeLastPhoto({
       holdId: session.currentHoldId,
     })
     await bot.sendMessage(chatId, messages.systemError)
+  }
+}
+
+// Сервис безопасного удаления фото трюма с синхронизацией локальных и Directus-данных
+async function deleteHoldPhotoSafely({ photo, shiftId, holdId, directusUploader, holdPhotosRepo, logger }) {
+  const meta = { shiftId, holdId, holdPhotoId: photo?.id }
+  const publicPath = photo?.disk_public_url || photo?.disk_path
+  const directusId = extractDirectusId(publicPath)
+
+  if (directusUploader) {
+    if (directusId) {
+      try {
+        logger?.info('Запрашиваем удаление файла в Directus', { ...meta, fileId: directusId })
+        await directusUploader.deleteFile(directusId)
+      } catch (error) {
+        logger?.error('Directus не смог удалить файл фото трюма', { ...meta, fileId: directusId, error: error.message })
+      }
+    } else {
+      logger?.warn('Не найден идентификатор файла Directus при удалении фото', meta)
+    }
+  }
+
+  if (photo?.disk_path && !isAssetPath(photo.disk_path)) {
+    try {
+      await safeDeleteFile({
+        filePath: photo.disk_path,
+        logger,
+        meta: {
+          ...meta,
+          fileId: directusId || photo.id,
+        },
+      })
+    } catch (error) {
+      logger?.error('Не удалось удалить локальный файл фото трюма', { ...meta, error: error.message })
+    }
+  }
+
+  try {
+    await holdPhotosRepo.deletePhotoById(photo.id)
+    logger?.info('Запись фото трюма удалена из БД', meta)
+  } catch (error) {
+    logger?.error('Не удалось удалить запись фото трюма из БД', { ...meta, error: error.message })
+    throw error
   }
 }
 
