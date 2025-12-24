@@ -5,6 +5,7 @@ function createHoldsRepo(pool) {
     ensureForShift,
     getHoldsWithCounts,
     findById,
+    listByShift,
   }
 
   // Создаём записи трюмов для смены
@@ -75,6 +76,16 @@ function createHoldsRepo(pool) {
     )
 
     return rows[0] || null
+  }
+
+  // Возвращаем список трюмов по смене без агрегатов
+  async function listByShift(shiftId) {
+    const { rows } = await pool.query(
+      'SELECT id, shift_id, number FROM holds WHERE shift_id = $1 ORDER BY number',
+      [shiftId],
+    )
+
+    return rows
   }
 }
 
