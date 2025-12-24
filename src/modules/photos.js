@@ -38,6 +38,7 @@ function registerPhotosModule({
   shiftsRepo,
   holdsRepo,
   holdPhotosRepo,
+  holdFoldersRepo,
   brigadiersRepo,
   directusConfig,
   openShiftMenu,
@@ -334,7 +335,7 @@ function registerPhotosModule({
       let diskPath = localPath
       let diskPublicUrl = null
 
-      if (directusUploader && directusFolders) {
+      if (directusUploader && directusFolders && holdFoldersRepo) {
         let folderId = process.env.DIRECTUS_UPLOAD_FOLDER_ID
         let holdDisplayNumber = session.currentHoldNumber || session.currentHoldId
 
