@@ -70,6 +70,7 @@ function createBot({ token, logger, repositories, messages, directusClient, dire
     shiftsRepo: repositories.shifts,
     holdsRepo: repositories.holds,
     holdPhotosRepo: repositories.holdPhotos,
+    holdFoldersRepo: repositories.holdFolders,
     brigadiersRepo: repositories.brigadiers,
     directusConfig,
     openShiftMenu: ({ chatId, telegramId, brigadier, shift }) =>
