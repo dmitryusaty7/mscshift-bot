@@ -21,54 +21,65 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
 
       const form = new FormData()
 
-      logger.info('Начало загрузки файла в Directus', {
-        folderId: targetFolderId,
-        filename: resolvedFilename,
-        mimeType: effectiveMimeType,
-        bufferSize: buffer?.length,
-      })
-
       form.append('file', buffer, {
         filename: resolvedFilename,
         contentType: effectiveMimeType,
+        knownLength: buffer.length,
       })
 
       if (title) {
         form.append('title', title)
       }
 
-      form.append('folder', String(targetFolderId))
+      if (targetFolderId) {
+        form.append('folder', String(targetFolderId))
+      }
+
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        ...form.getHeaders(),
+      }
+
+      logger.info('Directus upload multipart prepared', {
+        folderId: targetFolderId,
+        filename: resolvedFilename,
+        mimeType: effectiveMimeType,
+        bufferSize: buffer?.length,
+      })
 
       const response = await fetch(`${baseUrl}/files`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          ...form.getHeaders(),
-        },
+        headers,
         body: form,
       })
 
-      const payload = await safeJson(response)
+      const rawText = await response.text()
+      let payload
 
-      logger.info('Ответ Directus на загрузку файла', {
-        status: response.status,
-        statusText: response.statusText,
-        dataId: payload?.data?.id,
-      })
-
-      if (!response.ok) {
-        logger.error('Directus вернул ошибку при загрузке файла', {
-          status: response.status,
-          statusText: response.statusText,
-          payload,
-          errors: payload?.errors,
+      try {
+        payload = JSON.parse(rawText)
+      } catch (error) {
+        logger.error('Directus вернул не-JSON ответ при загрузке файла', {
+          error: error.message,
+          rawText,
         })
-        throw new Error('Directus не смог принять файл')
+        throw new Error(`Directus returned non-JSON response: ${rawText}`)
+      }
+
+      if (!response.ok || !payload?.data?.id) {
+        logger.error('Directus upload failed', {
+          status: response.status,
+          payload,
+        })
+        throw new Error('Directus upload failed')
       }
 
       const normalized = normalizePayload(payload)
 
-      logger.info('Файл успешно загружен в Directus', { status: response.status, id: normalized.id })
+      logger.info('Directus upload succeeded', {
+        status: response.status,
+        id: normalized.id,
+      })
 
       return normalized
     } catch (error) {
