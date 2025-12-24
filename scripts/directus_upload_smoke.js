@@ -1,51 +1,55 @@
-require('dotenv').config()
+#!/usr/bin/env node
+// Простой смоук-тест загрузки файла в Directus через сервис бота
+
 const fs = require('fs')
 const path = require('path')
 const { createDirectusUploadService } = require('../src/services/directusUploadService')
 
-function createLogger() {
-  return {
-    info: console.log,
-    warn: console.warn,
-    error: console.error,
-  }
-}
-
 async function main() {
+  const directusUrl = process.env.DIRECTUS_URL
+  const directusToken = process.env.DIRECTUS_TOKEN
+  const directusFolderId = process.env.DIRECTUS_UPLOAD_FOLDER_ID
+
+  if (!directusUrl || !directusToken || !directusFolderId) {
+    throw new Error('Нужно указать DIRECTUS_URL, DIRECTUS_TOKEN и DIRECTUS_UPLOAD_FOLDER_ID')
+  }
+
   const filePath = process.argv[2]
 
   if (!filePath) {
-    console.error('Укажите путь к файлу как аргумент: node scripts/directus_upload_smoke.js ./sample.jpg')
-    process.exit(1)
+    throw new Error('Укажите путь к локальному файлу JPG как первый аргумент')
   }
 
-  const { DIRECTUS_URL, DIRECTUS_TOKEN, DIRECTUS_UPLOAD_FOLDER_ID } = process.env
-
-  if (!DIRECTUS_URL || !DIRECTUS_TOKEN) {
-    console.error('Не заданы DIRECTUS_URL или DIRECTUS_TOKEN')
-    process.exit(1)
-  }
-
-  const absolutePath = path.resolve(filePath)
-  const buffer = fs.readFileSync(absolutePath)
+  const buffer = await fs.promises.readFile(filePath)
+  const filename = path.basename(filePath)
 
   const uploader = createDirectusUploadService({
-    baseUrl: DIRECTUS_URL,
-    token: DIRECTUS_TOKEN,
-    logger: createLogger(),
+    baseUrl: directusUrl,
+    token: directusToken,
+    logger: console,
   })
 
   const uploaded = await uploader.uploadFile({
     buffer,
-    filename: path.basename(absolutePath),
+    filename,
     mimeType: 'image/jpeg',
-    folderId: DIRECTUS_UPLOAD_FOLDER_ID,
+    folderId: directusFolderId,
+    title: `Smoke upload ${new Date().toISOString()}`,
   })
 
-  console.log('Файл загружен, id:', uploaded.id)
+  await uploader.patchFileMeta(uploaded.id, {
+    folder: directusFolderId,
+    title: `Smoke upload ${new Date().toISOString()}`,
+    filename_download: filename,
+  })
+
+  const diskPath = `/assets/${uploaded.id}`
+  const publicUrl = `${directusUrl}${diskPath}`
+
+  console.log('Загрузка завершена', { id: uploaded.id, publicUrl })
 }
 
 main().catch((error) => {
-  console.error('Smoke-загрузка завершилась ошибкой', error)
+  console.error('Смоук-тест Directus не прошёл', error)
   process.exit(1)
 })

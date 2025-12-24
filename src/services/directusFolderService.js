@@ -10,7 +10,7 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
 
   const cache = new Map()
 
-  async function resolveHoldFolder({ shiftId, shiftName, holdId, date }) {
+  async function resolveHoldFolder({ shiftId, shiftName, holdId, holdDisplayNumber, date }) {
     const currentDate = date ? new Date(date) : new Date()
     const year = String(currentDate.getFullYear())
     const month = getRussianMonthName(currentDate.getMonth())
@@ -21,7 +21,7 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
       month,
       day,
       `Смена ${shiftId} Судно ${sanitizeName(shiftName)}`,
-      `Трюм ${holdId}`,
+      `Трюм ${holdDisplayNumber || holdId}`,
     ]
 
     if (logger) {
