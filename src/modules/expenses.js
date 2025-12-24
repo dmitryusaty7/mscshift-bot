@@ -31,7 +31,6 @@ const EXPENSES_MODES = {
   INPUT_MATERIALS: 'INPUT_MATERIALS',
   INPUT_TAXI: 'INPUT_TAXI',
   INPUT_OTHER_AMOUNT: 'INPUT_OTHER_AMOUNT',
-  AWAIT_OTHER_COMMENT: 'AWAIT_OTHER_COMMENT',
 }
 
 // Русский комментарий: ключ сессии включает чат и смену, чтобы изолировать состояния
@@ -243,21 +242,7 @@ function registerExpensesModule({ bot, logger, messages, expensesRepo, shiftsRep
     }
 
     if (mode === EXPENSES_MODES.INPUT_OTHER_AMOUNT) {
-      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, kind: 'other', messages, logger, expensesRepo, expectComment: true })
-      return
-    }
-
-    if (mode === EXPENSES_MODES.AWAIT_OTHER_COMMENT) {
-      const parsed = parseExpenseValue(msg.text)
-      if (parsed === null) {
-        // Русский комментарий: если сумма уже сохранена и прилетает текст, принимаем его как комментарий
-        await expensesRepo.saveOtherComment({ shiftId, comment: msg.text })
-        updateSessionMode({ chatId, shiftId, mode: EXPENSES_MODES.HUB })
-        await renderExpensesHub({ ctx, shiftId, messages, logger, expensesRepo, withKeyboard: true })
-        return
-      }
-
-      // Русский комментарий: допустимый ввод числа в режиме ожидания комментария игнорируем, пользователь должен снова выбрать кнопку
+      await processExpenseInput({ ctx, chatId, shiftId, text: msg.text, kind: 'other', messages, logger, expensesRepo })
       return
     }
   })
@@ -412,7 +397,7 @@ async function renderExpenseInput({ ctx, mode, messages }) {
 }
 
 // TODO: Review for merge — обработка ввода суммы расходов по белому списку колонок
-async function processExpenseInput({ ctx, chatId, shiftId, text, kind, messages, logger, expensesRepo, expectComment = false }) {
+async function processExpenseInput({ ctx, chatId, shiftId, text, kind, messages, logger, expensesRepo }) {
   const parsed = parseExpenseValue(text)
 
   if (parsed === null) {
@@ -439,8 +424,7 @@ async function processExpenseInput({ ctx, chatId, shiftId, text, kind, messages,
     // TODO: Review for merge — отмечаем категорию как посещённую, чтобы определить момент показа кнопки подтверждения
     setTouchedFlag({ chatId, shiftId, kind })
 
-    const nextMode = expectComment ? EXPENSES_MODES.AWAIT_OTHER_COMMENT : EXPENSES_MODES.HUB
-    updateSessionMode({ chatId, shiftId, mode: nextMode })
+    updateSessionMode({ chatId, shiftId, mode: EXPENSES_MODES.HUB })
 
     await renderExpensesHub({ ctx, shiftId, messages, logger, expensesRepo, withKeyboard: true })
   } catch (error) {

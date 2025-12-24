@@ -1,9 +1,13 @@
 const { parse, isValid } = require('date-fns')
 const { ru } = require('date-fns/locale')
 const { USER_STATES, setUserState, getUserState } = require('../bot/middlewares/session')
-const { buildShiftMenuKeyboard, buildBackKeyboard } = require('../utils/shift-menu.keyboard')
+const {
+  buildShiftMenuKeyboard,
+  buildBackKeyboard,
+  buildShiftMenuNavigationKeyboard,
+} = require('../utils/shift-menu.keyboard')
 const { formatDateHuman, toPgDate } = require('../utils/time')
-const { buildStatusesFromShift } = require('../utils/shift-status')
+const { buildStatusesFromShift, isShiftComplete } = require('../utils/shift-status')
 const { backToMainMenu } = require('../utils/back-to-main-menu')
 
 const SHIFT_STEPS = {
@@ -12,6 +16,7 @@ const SHIFT_STEPS = {
   WAITING_SHIP: 'WAITING_SHIP',
   WAITING_HOLDS: 'WAITING_HOLDS',
   MENU_READY: 'MENU_READY',
+  WAITING_COMPLETION_CONFIRM: 'WAITING_COMPLETION_CONFIRM',
 }
 
 const shiftSessions = new Map()
@@ -71,6 +76,24 @@ function registerShiftMenuModule({
       return
     }
 
+    if (session?.step === SHIFT_STEPS.WAITING_COMPLETION_CONFIRM && msg.text === messages.navigation.back) {
+      // Русский комментарий: отмена завершения возвращает к меню смены
+      session.step = SHIFT_STEPS.MENU_READY
+      shiftSessions.set(telegramId, session)
+
+      await bot.sendMessage(chatId, messages.shiftMenu.backKeyboardHint, {
+        reply_markup: {
+          keyboard: buildShiftMenuNavigationKeyboard({
+            backText: messages.navigation.back,
+            completeText: messages.shiftMenu.completeButton,
+            statuses: session.data.statuses,
+          }),
+          resize_keyboard: true,
+        },
+      })
+      return
+    }
+
     if (msg.text === messages.navigation.back) {
       await handleBackToMainMenuFromShift({
         bot,
@@ -119,6 +142,27 @@ function registerShiftMenuModule({
         })
         break
       case SHIFT_STEPS.MENU_READY:
+        await handleShiftMenuActions({
+          bot,
+          chatId,
+          telegramId,
+          text: msg.text,
+          messages,
+          session,
+        })
+        break
+      case SHIFT_STEPS.WAITING_COMPLETION_CONFIRM:
+        await handleShiftCompletionConfirm({
+          bot,
+          chatId,
+          telegramId,
+          text: msg.text,
+          messages,
+          session,
+          shiftsRepo,
+          logger,
+          returnToMainPanel,
+        })
         break
       default:
         break
@@ -516,7 +560,11 @@ async function renderShiftMenu({ bot, chatId, session, messages, telegramId }) {
 
   const backKeyboardMessage = await bot.sendMessage(chatId, messages.shiftMenu.backKeyboardHint, {
     reply_markup: {
-      keyboard: buildBackKeyboard(messages.navigation.back),
+      keyboard: buildShiftMenuNavigationKeyboard({
+        backText: messages.navigation.back,
+        completeText: messages.shiftMenu.completeButton,
+        statuses: session.data.statuses,
+      }),
       resize_keyboard: true,
     },
   })
@@ -537,6 +585,115 @@ async function renderShiftMenu({ bot, chatId, session, messages, telegramId }) {
 function buildKeyboardWithBack(baseKeyboard, backText) {
   const safeKeyboard = Array.isArray(baseKeyboard) && baseKeyboard.length ? baseKeyboard : []
   return [...safeKeyboard, [{ text: backText }]]
+}
+
+// Русский комментарий: клавиатура подтверждения завершения смены
+function buildCompletionConfirmKeyboard({ confirmText, backText }) {
+  return [[{ text: confirmText }], [{ text: backText }]]
+}
+
+// Русский комментарий: обработка действий из меню смены
+async function handleShiftMenuActions({
+  bot,
+  chatId,
+  telegramId,
+  text,
+  messages,
+  session,
+}) {
+  if (text !== messages.shiftMenu.completeButton) {
+    return
+  }
+
+  if (!isShiftComplete(session?.data?.statuses)) {
+    await bot.sendMessage(chatId, messages.shiftMenu.completionUnavailable)
+    return
+  }
+
+  // Русский комментарий: показываем подтверждение отдельным сообщением без изменения предыдущих
+  session.step = SHIFT_STEPS.WAITING_COMPLETION_CONFIRM
+  shiftSessions.set(telegramId, session)
+
+  await bot.sendMessage(chatId, messages.shiftMenu.confirmCompletionQuestion, {
+    reply_markup: {
+      keyboard: buildCompletionConfirmKeyboard({
+        confirmText: messages.shiftMenu.confirmCompletionYes,
+        backText: messages.navigation.back,
+      }),
+      resize_keyboard: true,
+    },
+  })
+}
+
+// Русский комментарий: фиксируем завершение смены после подтверждения
+async function handleShiftCompletionConfirm({
+  bot,
+  chatId,
+  telegramId,
+  text,
+  messages,
+  session,
+  shiftsRepo,
+  logger,
+  returnToMainPanel,
+}) {
+  if (text !== messages.shiftMenu.confirmCompletionYes) {
+    await bot.sendMessage(chatId, messages.shiftMenu.confirmCompletionQuestion, {
+      reply_markup: {
+        keyboard: buildCompletionConfirmKeyboard({
+          confirmText: messages.shiftMenu.confirmCompletionYes,
+          backText: messages.navigation.back,
+        }),
+        resize_keyboard: true,
+      },
+    })
+    return
+  }
+
+  const shiftId = session?.data?.shiftId
+
+  if (!shiftId) {
+    logger?.warn('Не найден идентификатор смены при подтверждении завершения', { telegramId })
+    await bot.sendMessage(chatId, messages.systemError)
+    return
+  }
+
+  if (!isShiftComplete(session?.data?.statuses)) {
+    session.step = SHIFT_STEPS.MENU_READY
+    shiftSessions.set(telegramId, session)
+
+    await bot.sendMessage(chatId, messages.shiftMenu.completionUnavailable, {
+      reply_markup: {
+        keyboard: buildShiftMenuNavigationKeyboard({
+          backText: messages.navigation.back,
+          completeText: messages.shiftMenu.completeButton,
+          statuses: session.data.statuses,
+        }),
+        resize_keyboard: true,
+      },
+    })
+    return
+  }
+
+  try {
+    await shiftsRepo.closeShift(shiftId)
+  } catch (error) {
+    logger?.error('Не удалось завершить смену', { error: error.message, telegramId, shiftId })
+    await bot.sendMessage(chatId, messages.systemError)
+    return
+  }
+
+  await bot.sendMessage(chatId, messages.shiftMenu.completed)
+
+  await handleBackToMainMenuFromShift({
+    bot,
+    chatId,
+    telegramId,
+    session,
+    messages,
+    logger,
+    returnToMainPanel,
+  })
 }
 
 // Русский комментарий: централизованно чистим следы меню смены

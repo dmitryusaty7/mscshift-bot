@@ -347,33 +347,13 @@ async function renderSalaryHub({ bot, chatId, telegramId, messages, crewRepo, wa
   const driverAmount = crew.driver && wages?.driver_amount != null ? Number(wages.driver_amount) : null
   const workersTotal = wages?.workers_total != null ? Number(wages.workers_total) : 0
 
-  const total = calculateSalaryTotal({
-    // TODO: Review for merge — приводим суммы к Number перед расчётом, чтобы исключить конкатенацию строк
-    brigadier: brigadierAmount,
-    deputy: deputyAmount,
-    driver: driverAmount,
-    workers: workersTotal,
-  })
-
   const ready =
     Boolean(brigadierAmount) &&
     Boolean(driverAmount) &&
     crew.workers.every((worker) => Boolean(workerAmountMap.get(worker.id))) &&
     (crew.deputy ? Boolean(deputyAmount) : true)
 
-  const textLines = [
-    messages.salary.hub.title,
-    '',
-    `${messages.salary.hub.brigadier} ${brigadierAmount || '—'}`,
-  ]
-
-  if (crew.deputy) {
-    textLines.push(`${messages.salary.hub.deputy} ${deputyAmount || '—'}`)
-  }
-
-  textLines.push(`${messages.salary.hub.driver} ${driverAmount || '—'}`)
-  textLines.push('')
-  textLines.push(messages.salary.hub.total(total))
+  const textLines = [messages.salary.hub.title, '', messages.salary.hub.description]
 
   const inlineKeyboard = []
   inlineKeyboard.push([
@@ -411,8 +391,6 @@ async function renderSalaryHub({ bot, chatId, telegramId, messages, crewRepo, wa
       },
     ])
   })
-
-  inlineKeyboard.push([{ text: messages.salary.hub.recalc, callback_data: 'salary:recalc' }])
 
   if (ready) {
     inlineKeyboard.push([{ text: messages.salary.hub.confirm, callback_data: 'salary:confirm' }])
@@ -656,17 +634,6 @@ async function returnToShiftMenu({
     logger.error('Не удалось вернуться в меню смены из блока зарплаты', { error: error.message })
     await bot.sendMessage(chatId, messages.systemError)
   }
-}
-
-// TODO: Review for merge — аккуратно суммируем зарплаты с приведением типов
-function calculateSalaryTotal({ brigadier, deputy, driver, workers }) {
-  // Приводим каждое значение к Number, чтобы избежать конкатенации строк и плавающих типов
-  const brigadierAmount = Number(brigadier) || 0
-  const deputyAmount = Number(deputy) || 0
-  const driverAmount = Number(driver) || 0
-  const workersTotal = Number(workers) || 0
-
-  return brigadierAmount + deputyAmount + driverAmount + workersTotal
 }
 
 // TODO: Review for merge — вспомогательная функция форматирования ФИО
