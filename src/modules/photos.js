@@ -523,7 +523,7 @@ function registerPhotosModule({
 }
 
 // TODO: Review for merge — отрисовка списка трюмов
-async function renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard }) {
+async function renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard, directusConfig }) {
   try {
     const holds = await holdsRepo.getHoldsWithCounts(session.shiftId)
     session.holdNumbers = new Map()
