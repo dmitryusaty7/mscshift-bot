@@ -16,7 +16,6 @@ const PHOTO_STEPS = {
 const photoSessions = new Map()
 // TODO: Review for merge — базовая директория для локального сохранения фото
 const LOCAL_UPLOADS_DIR = '/opt/mscshift-bot/uploads/holds'
-const DIRECTUS_SHIFT_PHOTOS_COLLECTION = 'shift_photos'
 
 function buildPhotosReplyKeyboard(messages, { showBack = true } = {}) {
   const rows = []
@@ -24,8 +23,6 @@ function buildPhotosReplyKeyboard(messages, { showBack = true } = {}) {
   if (showBack) {
     rows.push([{ text: messages.photos.hold.back }])
   }
-
-  rows.push([{ text: messages.photos.hub.backToShift }])
 
   return {
     keyboard: rows,
@@ -194,6 +191,7 @@ function registerPhotosModule({
             session,
             messages,
             holdsRepo,
+            holdPhotosRepo,
             logger,
             withReplyKeyboard: true,
           })
@@ -203,7 +201,7 @@ function registerPhotosModule({
       }
 
       if (session.step === PHOTO_STEPS.HUB) {
-        if (msg.text === messages.photos.hold.back || msg.text === messages.photos.hub.backToShift) {
+        if (msg.text === messages.photos.hold.back) {
           // TODO: Review for merge — возврат в меню смены из хаба
           await returnToShiftMenu({
             bot,
@@ -234,24 +232,9 @@ function registerPhotosModule({
             session,
             messages,
             holdsRepo,
+            holdPhotosRepo,
             logger,
             withReplyKeyboard: true,
-          })
-          return
-        }
-
-        if (msg.text === messages.photos.hub.backToShift) {
-          // TODO: Review for merge — возврат в меню смены из подтверждения
-          await returnToShiftMenu({
-            bot,
-            chatId,
-            telegramId,
-            session,
-            brigadiersRepo,
-            shiftsRepo,
-            messages,
-            logger,
-            openShiftMenu,
           })
           return
         }
@@ -272,23 +255,9 @@ function registerPhotosModule({
             session,
             messages,
             holdsRepo,
+            holdPhotosRepo,
             logger,
             withReplyKeyboard: true,
-          })
-          return
-        }
-
-        if (msg.text === messages.photos.hub.backToShift) {
-          await returnToShiftMenu({
-            bot,
-            chatId,
-            telegramId,
-            session,
-            brigadiersRepo,
-            shiftsRepo,
-            messages,
-            logger,
-            openShiftMenu,
           })
           return
         }
@@ -523,15 +492,27 @@ function registerPhotosModule({
 }
 
 // TODO: Review for merge — отрисовка списка трюмов
-async function renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard, directusConfig }) {
+async function renderHub({ bot, chatId, session, messages, holdsRepo, holdPhotosRepo, logger, withReplyKeyboard }) {
   try {
-    const holds = await holdsRepo.getHoldsWithCounts(session.shiftId)
+    const holds = await holdsRepo.listByShift(session.shiftId)
     session.holdNumbers = new Map()
     const inline = []
 
-    holds.forEach((hold, index) => {
-      const displayNumber = index + 1
-      const count = Number.isInteger(hold.photos_count) ? hold.photos_count : 0
+    const holdsWithCounts = await Promise.all(
+      holds.map(async (hold, index) => {
+        const displayNumber = index + 1
+        const count = await getHoldPhotoCount({
+          shiftId: session.shiftId,
+          holdId: hold.id,
+          holdPhotosRepo,
+          logger,
+        })
+
+        return { hold, displayNumber, count }
+      }),
+    )
+
+    holdsWithCounts.forEach(({ hold, displayNumber, count }) => {
       session.holdNumbers.set(hold.id, displayNumber)
       inline.push([{ text: messages.photos.hub.holdButton(displayNumber, count), callback_data: `b8:hold:${hold.id}` }])
     })
@@ -684,43 +665,13 @@ async function removeLastPhoto({
       return
     }
 
-    const directusId = extractDirectusId(lastPhoto.disk_public_url || lastPhoto.disk_path)
-
-    if (directusUploader) {
-      if (directusId) {
-        logger?.info('Запрашиваем удаление файла в Directus', {
-          shiftId: session.shiftId,
-          holdId: session.currentHoldId,
-          fileId: directusId,
-        })
-
-        await directusUploader.deleteFile(directusId)
-      } else {
-        logger?.warn('Не найден идентификатор файла Directus при удалении фото', {
-          shiftId: session.shiftId,
-          holdId: session.currentHoldId,
-          holdPhotoId: lastPhoto.id,
-        })
-      }
-    }
-
-    if (lastPhoto.disk_path && !isAssetPath(lastPhoto.disk_path)) {
-      await safeDeleteFile({
-        filePath: lastPhoto.disk_path,
-        logger,
-        meta: {
-          shiftId: session.shiftId,
-          holdId: session.currentHoldId,
-          fileId: directusId || lastPhoto.id,
-        },
-      })
-    }
-
-    await holdPhotosRepo.deletePhotoById(lastPhoto.id)
-    logger?.info('Запись фото трюма удалена из БД', {
+    await deleteHoldPhotoSafely({
+      photo: lastPhoto,
       shiftId: session.shiftId,
       holdId: session.currentHoldId,
-      fileId: directusId || lastPhoto.id,
+      directusUploader,
+      holdPhotosRepo,
+      logger,
     })
 
     await renderHub({
@@ -729,11 +680,11 @@ async function removeLastPhoto({
       session,
       messages,
       holdsRepo,
+      holdPhotosRepo,
       logger,
       withReplyKeyboard: false,
     })
     await renderHold({ bot, chatId, session, messages, directusConfig, logger, holdPhotosRepo })
-    await bot.sendMessage(chatId, messages.photos.hold.deleted)
   } catch (error) {
     logger.error('Не удалось удалить последнее фото трюма', {
       error: error.message,
@@ -744,11 +695,54 @@ async function removeLastPhoto({
   }
 }
 
+// Сервис безопасного удаления фото трюма с синхронизацией локальных и Directus-данных
+async function deleteHoldPhotoSafely({ photo, shiftId, holdId, directusUploader, holdPhotosRepo, logger }) {
+  const meta = { shiftId, holdId, holdPhotoId: photo?.id }
+  const publicPath = photo?.disk_public_url || photo?.disk_path
+  const directusId = extractDirectusId(publicPath)
+
+  if (directusUploader) {
+    if (directusId) {
+      try {
+        logger?.info('Запрашиваем удаление файла в Directus', { ...meta, fileId: directusId })
+        await directusUploader.deleteFile(directusId)
+      } catch (error) {
+        logger?.error('Directus не смог удалить файл фото трюма', { ...meta, fileId: directusId, error: error.message })
+      }
+    } else {
+      logger?.warn('Не найден идентификатор файла Directus при удалении фото', meta)
+    }
+  }
+
+  if (photo?.disk_path && !isAssetPath(photo.disk_path)) {
+    try {
+      await safeDeleteFile({
+        filePath: photo.disk_path,
+        logger,
+        meta: {
+          ...meta,
+          fileId: directusId || photo.id,
+        },
+      })
+    } catch (error) {
+      logger?.error('Не удалось удалить локальный файл фото трюма', { ...meta, error: error.message })
+    }
+  }
+
+  try {
+    await holdPhotosRepo.deletePhotoById(photo.id)
+    logger?.info('Запись фото трюма удалена из БД', meta)
+  } catch (error) {
+    logger?.error('Не удалось удалить запись фото трюма из БД', { ...meta, error: error.message })
+    throw error
+  }
+}
+
 async function getHoldPhotoCount({ shiftId, holdId, holdPhotosRepo, logger }) {
   try {
     return await holdPhotosRepo.countByHold({ shiftId, holdId })
   } catch (error) {
-    logger?.error('Не удалось получить количество фото трюма из БД', {
+    logger?.warn('Не удалось получить количество фото трюма локально, используем 0', {
       error: error.message,
       shiftId,
       holdId,
@@ -765,106 +759,6 @@ function extractLargestPhotoId(photos) {
 
   const sorted = [...photos].sort((a, b) => (a.file_size || 0) - (b.file_size || 0))
   return sorted[sorted.length - 1]?.file_id || null
-}
-
-// TODO: Review for merge — берём количество фото трюмов из Directus как единственный источник правды
-async function fetchHoldPhotoCountsFromDirectus({ shiftId, holdIds = [], directusConfig, logger }) {
-  const unknownCounts = new Map((holdIds || []).map((id) => [id, '?']))
-
-  if (!directusConfig?.baseUrl || !directusConfig?.token) {
-    logger?.warn('Directus недоступен для подсчёта фото трюмов', { reason: 'config missing' })
-    return unknownCounts
-  }
-
-  try {
-    const params = new URLSearchParams()
-    params.append('aggregate[count]', 'id')
-    params.append('groupBy[]', 'hold_id')
-    params.append('filter[shift_id][_eq]', String(shiftId))
-    params.append('limit', '0')
-
-    if (holdIds.length > 0) {
-      params.append('filter[hold_id][_in]', holdIds.join(','))
-    }
-
-    const response = await fetch(
-      `${removeTrailingSlash(directusConfig.baseUrl)}/items/${DIRECTUS_SHIFT_PHOTOS_COLLECTION}?${params.toString()}`,
-      {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${directusConfig.token}` },
-      },
-    )
-
-    const payload = await safeJson(response, logger)
-
-    if (!response.ok || !Array.isArray(payload?.data)) {
-      logger?.warn('Directus вернул ошибку при подсчёте фото трюмов', {
-        status: response.status,
-        statusText: response.statusText,
-        payload,
-      })
-      return unknownCounts
-    }
-
-    const counts = new Map(unknownCounts)
-
-    payload.data.forEach((row) => {
-      const holdId = Number.parseInt(row.hold_id ?? row.hold ?? row.holdId, 10)
-      const countValue = row?.count?.id ?? row?.count ?? row?.['count(id)']
-      const count = Number.parseInt(countValue, 10)
-
-      if (Number.isInteger(holdId) && Number.isInteger(count)) {
-        counts.set(holdId, count)
-      }
-    })
-
-    return counts
-  } catch (error) {
-    logger?.warn('Не удалось получить количество фото трюмов из Directus', { error: error.message })
-    return unknownCounts
-  }
-}
-
-// TODO: Review for merge — считаем общее количество фото по смене через Directus
-async function fetchTotalPhotoCountFromDirectus({ shiftId, directusConfig, logger }) {
-  if (!directusConfig?.baseUrl || !directusConfig?.token) {
-    logger?.warn('Directus недоступен для подсчёта общего количества фото трюмов', { reason: 'config missing' })
-    return '?'
-  }
-
-  try {
-    const params = new URLSearchParams()
-    params.append('aggregate[count]', 'id')
-    params.append('filter[shift_id][_eq]', String(shiftId))
-    params.append('limit', '0')
-
-    const response = await fetch(
-      `${removeTrailingSlash(directusConfig.baseUrl)}/items/${DIRECTUS_SHIFT_PHOTOS_COLLECTION}?${params.toString()}`,
-      {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${directusConfig.token}` },
-      },
-    )
-
-    const payload = await safeJson(response, logger)
-
-    if (!response.ok || !Array.isArray(payload?.data)) {
-      logger?.warn('Directus вернул ошибку при подсчёте общего количества фото', {
-        status: response.status,
-        statusText: response.statusText,
-        payload,
-      })
-      return '?'
-    }
-
-    const rawCount = payload.data?.[0]?.count?.id ?? payload.data?.[0]?.count ?? payload.data?.[0]?.['count(id)']
-    const count = Number.parseInt(rawCount, 10)
-
-    return Number.isInteger(count) ? count : '?'
-  } catch (error) {
-    logger?.warn('Не удалось получить общее количество фото трюмов из Directus', { error: error.message })
-    return '?'
-  }
 }
 
 // TODO: Review for merge — скачиваем файл из Telegram для последующей загрузки в Directus
@@ -962,23 +856,6 @@ function sanitizeForFs(value) {
     .replace(/[\\/]/g, '_')
     .replace(/\s+/g, '_')
     .replace(/[^\w\-.А-Яа-яЁё]/g, '_')
-}
-
-function removeTrailingSlash(url) {
-  if (!url) {
-    return url
-  }
-
-  return url.endsWith('/') ? url.slice(0, -1) : url
-}
-
-async function safeJson(response, logger) {
-  try {
-    return await response.json()
-  } catch (error) {
-    logger?.warn('Не удалось распарсить ответ Directus как JSON при подсчёте фото', { error: error.message })
-    return null
-  }
 }
 
 module.exports = { registerPhotosModule }
