@@ -13,6 +13,7 @@ const { createExpensesRepo } = require('./db/expenses.repo')
 // TODO: Review for merge — репозитории трюмов и фото трюмов
 const { createHoldsRepo } = require('./db/holds.repo')
 const { createHoldPhotosRepo } = require('./db/hold-photos.repo')
+const { createHoldDirectusFoldersRepo } = require('./db/hold-directus-folders.repo')
 const { createLogger } = require('./utils/logger')
 const { createDirectusClient } = require('./directus')
 
@@ -43,6 +44,7 @@ async function bootstrap() {
   // TODO: Review for merge — инициализация работы с трюмами и фото трюмов
   const holdsRepo = createHoldsRepo(pool)
   const holdPhotosRepo = createHoldPhotosRepo(pool, logger)
+  const holdDirectusFoldersRepo = createHoldDirectusFoldersRepo(pool, logger)
   // TODO: Review for merge — Directus может быть не настроен, поэтому клиент создаётся только при наличии конфигурации
   const directusClient = config.directus
     ? createDirectusClient({
@@ -70,6 +72,7 @@ async function bootstrap() {
       expenses: expensesRepo,
       holds: holdsRepo,
       holdPhotos: holdPhotosRepo,
+      holdFolders: holdDirectusFoldersRepo,
     },
     messages,
     directusClient,
