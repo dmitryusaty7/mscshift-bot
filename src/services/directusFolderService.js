@@ -9,6 +9,7 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
   }
 
   const cache = new Map()
+  const folderLocks = new Map()
 
   async function resolveHoldFolder({ shiftId, shiftName, holdId, holdDisplayNumber, date }) {
     const currentDate = date ? new Date(date) : new Date()
@@ -47,16 +48,45 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
       return cache.get(key)
     }
 
-    const existing = await findFolder(name, parentId)
+    if (folderLocks.has(key)) {
+      if (logger) {
+        logger.info('Ожидание блокировки на разрешение папки Directus', { name, parentId })
+      }
 
-    if (existing) {
-      cache.set(key, existing)
-      return existing
+      return folderLocks.get(key)
     }
 
-    const created = await createFolder(name, parentId)
-    cache.set(key, created)
-    return created
+    let startResolution
+
+    const resolutionPromise = new Promise((resolve, reject) => {
+      startResolution = async () => {
+        try {
+          const existing = await findFolder(name, parentId)
+
+          if (existing) {
+            cache.set(key, existing)
+            resolve(existing)
+            return
+          }
+
+          if (logger) {
+            logger.info('Создание папки Directus под блокировкой', { name, parentId })
+          }
+
+          const created = await createFolder(name, parentId)
+          cache.set(key, created)
+          resolve(created)
+        } catch (error) {
+          reject(error)
+        } finally {
+          folderLocks.delete(key)
+        }
+      }
+    })
+
+    folderLocks.set(key, resolutionPromise)
+    await startResolution()
+    return resolutionPromise
   }
 
   async function findFolder(name, parentId) {
