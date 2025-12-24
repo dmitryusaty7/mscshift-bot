@@ -7,6 +7,7 @@ function createShiftsRepo(pool) {
     getActiveByBrigadier,
     findActiveByIdAndBrigadier,
     markPhotosFilled,
+    closeShift,
   }
 
   // Проверяем, есть ли смена с такой датой, бригадиром и судном
@@ -139,6 +140,20 @@ function createShiftsRepo(pool) {
     `
 
     const { rows } = await pool.query(query, [shiftId, brigadierId])
+    return rows[0] || null
+  }
+
+  // Завершаем смену, отмечая её как закрытую
+  async function closeShift(shiftId) {
+    const query = `
+      UPDATE shifts
+      SET is_closed = true,
+          updated_at = now()
+      WHERE id = $1
+      RETURNING *
+    `
+
+    const { rows } = await pool.query(query, [shiftId])
     return rows[0] || null
   }
 

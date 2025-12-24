@@ -62,6 +62,11 @@ const messages = {
     sectionUnknown: 'Неизвестный раздел. Попробуйте ещё раз.',
     backToMainButton: '⬅️ Назад',
     backKeyboardHint: 'Для выхода нажмите кнопку ниже.',
+    completeButton: '✅ Завершить смену',
+    confirmCompletionQuestion: 'Вы подтверждаете завершение смены?',
+    confirmCompletionYes: '✅ Подтверждаю',
+    completionUnavailable: 'Не удалось завершить смену: заполните все разделы и попробуйте снова.',
+    completed: 'Смена завершена. Возвращаюсь в главное меню.',
     menu: ({ date, brigadierName, shipName, holdsCount }) =>
       [
         '<b>Меню смены</b>',
