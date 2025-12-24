@@ -11,10 +11,6 @@ function buildShiftMenuKeyboard({ statuses }) {
     [{ text: `${statusIcon(safeStatuses.photosFilled)} 🖼 Фото трюмов`, callback_data: 'shift:photos' }],
   ]
 
-  if (isShiftComplete(safeStatuses)) {
-    buttons.push([{ text: '✅ Завершить смену', callback_data: 'shift:complete' }])
-  }
-
   return buttons
 }
 
@@ -22,4 +18,17 @@ function buildBackKeyboard(backText) {
   return [[{ text: backText }]]
 }
 
-module.exports = { buildShiftMenuKeyboard, buildBackKeyboard }
+function buildShiftMenuNavigationKeyboard({ backText, completeText, statuses }) {
+  const rows = []
+
+  // Русский комментарий: кнопку завершения показываем только когда все разделы заполнены
+  if (isShiftComplete(statuses)) {
+    rows.push([{ text: completeText }])
+  }
+
+  rows.push([{ text: backText }])
+
+  return rows
+}
+
+module.exports = { buildShiftMenuKeyboard, buildBackKeyboard, buildShiftMenuNavigationKeyboard }
