@@ -16,6 +16,7 @@ const PHOTO_STEPS = {
 const photoSessions = new Map()
 // TODO: Review for merge — базовая директория для локального сохранения фото
 const LOCAL_UPLOADS_DIR = '/opt/mscshift-bot/uploads/holds'
+const DIRECTUS_SHIFT_PHOTOS_COLLECTION = 'shift_photos'
 
 // TODO: Review for merge — регистрация модуля Блока 8 «Фото трюмов»
 function registerPhotosModule({
@@ -73,7 +74,7 @@ function registerPhotosModule({
         await bot.answerCallbackQuery(query.id)
         session.step = PHOTO_STEPS.CONFIRM
         photoSessions.set(telegramId, session)
-        await renderConfirmDialog({ bot, chatId, session, messages, holdPhotosRepo, logger })
+        await renderConfirmDialog({ bot, chatId, session, messages, directusConfig, logger })
         return
       }
 
@@ -116,7 +117,7 @@ function registerPhotosModule({
         session.step = PHOTO_STEPS.HOLD
         photoSessions.set(telegramId, session)
         await bot.answerCallbackQuery(query.id)
-        await renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger })
+        await renderHold({ bot, chatId, session, messages, directusConfig, logger })
         return
       }
 
@@ -172,7 +173,16 @@ function registerPhotosModule({
           // TODO: Review for merge — запуск хаба после вступительного экрана
           session.step = PHOTO_STEPS.HUB
           photoSessions.set(telegramId, session)
-          await renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard: true })
+          await renderHub({
+            bot,
+            chatId,
+            session,
+            messages,
+            holdsRepo,
+            logger,
+            withReplyKeyboard: true,
+            directusConfig,
+          })
         }
 
         return
@@ -204,7 +214,16 @@ function registerPhotosModule({
           session.currentHoldId = null
           session.currentHoldNumber = null
           photoSessions.set(telegramId, session)
-          await renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard: true })
+          await renderHub({
+            bot,
+            chatId,
+            session,
+            messages,
+            holdsRepo,
+            logger,
+            withReplyKeyboard: true,
+            directusConfig,
+          })
           return
         }
 
@@ -234,7 +253,16 @@ function registerPhotosModule({
           session.currentHoldNumber = null
           session.step = PHOTO_STEPS.HUB
           photoSessions.set(telegramId, session)
-          await renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard: true })
+          await renderHub({
+            bot,
+            chatId,
+            session,
+            messages,
+            holdsRepo,
+            logger,
+            withReplyKeyboard: true,
+            directusConfig,
+          })
           return
         }
 
@@ -249,6 +277,7 @@ function registerPhotosModule({
             holdsRepo,
             logger,
             directusUploader,
+            directusConfig,
           })
           return
         }
@@ -404,7 +433,7 @@ function registerPhotosModule({
         })
       }
 
-      await renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger })
+      await renderHold({ bot, chatId, session, messages, directusConfig, logger })
     } catch (error) {
       logger.error('Ошибка сохранения фото трюма', {
         error: error.message,
@@ -467,13 +496,20 @@ function registerPhotosModule({
 }
 
 // TODO: Review for merge — отрисовка списка трюмов
-async function renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard }) {
+async function renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard, directusConfig }) {
   try {
     const holds = await holdsRepo.getHoldsWithCounts(session.shiftId)
+    const directusCounts = await fetchHoldPhotoCountsFromDirectus({
+      shiftId: session.shiftId,
+      holdIds: holds.map((hold) => hold.id),
+      directusConfig,
+      logger,
+    })
     const inline = []
 
     holds.forEach((hold) => {
-      inline.push([{ text: messages.photos.hub.holdButton(hold.number, hold.photos_count), callback_data: `b8:hold:${hold.id}` }])
+      const count = directusCounts.get(hold.id) ?? '?'
+      inline.push([{ text: messages.photos.hub.holdButton(hold.number, count), callback_data: `b8:hold:${hold.id}` }])
     })
 
     inline.push([{ text: messages.photos.hub.confirm, callback_data: 'b8:confirm' }])
@@ -499,9 +535,15 @@ async function renderHub({ bot, chatId, session, messages, holdsRepo, logger, wi
 }
 
 // TODO: Review for merge — отрисовка экрана конкретного трюма
-  async function renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger }) {
+async function renderHold({ bot, chatId, session, messages, directusConfig, logger }) {
   try {
-    const count = await holdPhotosRepo.countByHold({ shiftId: session.shiftId, holdId: session.currentHoldId })
+    const counts = await fetchHoldPhotoCountsFromDirectus({
+      shiftId: session.shiftId,
+      holdIds: [session.currentHoldId],
+      directusConfig,
+      logger,
+    })
+    const count = counts.get(session.currentHoldId) ?? '?'
     const text = messages.photos.hold.title(session.currentHoldNumber, count)
 
     // TODO: Review for merge — пользователь добавляет фото напрямую в чат, отдельная кнопка не нужна
@@ -521,9 +563,13 @@ async function renderHub({ bot, chatId, session, messages, holdsRepo, logger, wi
 }
 
 // TODO: Review for merge — диалог подтверждения фото
-async function renderConfirmDialog({ bot, chatId, session, messages, holdPhotosRepo, logger }) {
+async function renderConfirmDialog({ bot, chatId, session, messages, directusConfig, logger }) {
   try {
-    const totalCount = await holdPhotosRepo.countTotalByShift(session.shiftId)
+    const totalCount = await fetchTotalPhotoCountFromDirectus({
+      shiftId: session.shiftId,
+      directusConfig,
+      logger,
+    })
     const text = messages.photos.confirm.text(totalCount)
 
     await bot.sendMessage(chatId, text, {
@@ -615,6 +661,7 @@ async function removeLastPhoto({
   holdsRepo,
   logger,
   directusUploader,
+  directusConfig,
 }) {
   try {
     const lastPhoto = await holdPhotosRepo.findLastPhoto({ shiftId: session.shiftId, holdId: session.currentHoldId })
@@ -662,8 +709,17 @@ async function removeLastPhoto({
       fileId: directusId || lastPhoto.id,
     })
 
-    await renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard: false })
-    await renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger })
+    await renderHub({
+      bot,
+      chatId,
+      session,
+      messages,
+      holdsRepo,
+      logger,
+      withReplyKeyboard: false,
+      directusConfig,
+    })
+    await renderHold({ bot, chatId, session, messages, directusConfig, logger })
     await bot.sendMessage(chatId, messages.photos.hold.deleted)
   } catch (error) {
     logger.error('Не удалось удалить последнее фото трюма', {
@@ -683,6 +739,106 @@ function extractLargestPhotoId(photos) {
 
   const sorted = [...photos].sort((a, b) => (a.file_size || 0) - (b.file_size || 0))
   return sorted[sorted.length - 1]?.file_id || null
+}
+
+// TODO: Review for merge — берём количество фото трюмов из Directus как единственный источник правды
+async function fetchHoldPhotoCountsFromDirectus({ shiftId, holdIds = [], directusConfig, logger }) {
+  const unknownCounts = new Map((holdIds || []).map((id) => [id, '?']))
+
+  if (!directusConfig?.baseUrl || !directusConfig?.token) {
+    logger?.warn('Directus недоступен для подсчёта фото трюмов', { reason: 'config missing' })
+    return unknownCounts
+  }
+
+  try {
+    const params = new URLSearchParams()
+    params.append('aggregate[count]', 'id')
+    params.append('groupBy[]', 'hold_id')
+    params.append('filter[shift_id][_eq]', String(shiftId))
+    params.append('limit', '0')
+
+    if (holdIds.length > 0) {
+      params.append('filter[hold_id][_in]', holdIds.join(','))
+    }
+
+    const response = await fetch(
+      `${removeTrailingSlash(directusConfig.baseUrl)}/items/${DIRECTUS_SHIFT_PHOTOS_COLLECTION}?${params.toString()}`,
+      {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${directusConfig.token}` },
+      },
+    )
+
+    const payload = await safeJson(response, logger)
+
+    if (!response.ok || !Array.isArray(payload?.data)) {
+      logger?.warn('Directus вернул ошибку при подсчёте фото трюмов', {
+        status: response.status,
+        statusText: response.statusText,
+        payload,
+      })
+      return unknownCounts
+    }
+
+    const counts = new Map(unknownCounts)
+
+    payload.data.forEach((row) => {
+      const holdId = Number.parseInt(row.hold_id ?? row.hold ?? row.holdId, 10)
+      const countValue = row?.count?.id ?? row?.count ?? row?.['count(id)']
+      const count = Number.parseInt(countValue, 10)
+
+      if (Number.isInteger(holdId) && Number.isInteger(count)) {
+        counts.set(holdId, count)
+      }
+    })
+
+    return counts
+  } catch (error) {
+    logger?.warn('Не удалось получить количество фото трюмов из Directus', { error: error.message })
+    return unknownCounts
+  }
+}
+
+// TODO: Review for merge — считаем общее количество фото по смене через Directus
+async function fetchTotalPhotoCountFromDirectus({ shiftId, directusConfig, logger }) {
+  if (!directusConfig?.baseUrl || !directusConfig?.token) {
+    logger?.warn('Directus недоступен для подсчёта общего количества фото трюмов', { reason: 'config missing' })
+    return '?'
+  }
+
+  try {
+    const params = new URLSearchParams()
+    params.append('aggregate[count]', 'id')
+    params.append('filter[shift_id][_eq]', String(shiftId))
+    params.append('limit', '0')
+
+    const response = await fetch(
+      `${removeTrailingSlash(directusConfig.baseUrl)}/items/${DIRECTUS_SHIFT_PHOTOS_COLLECTION}?${params.toString()}`,
+      {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${directusConfig.token}` },
+      },
+    )
+
+    const payload = await safeJson(response, logger)
+
+    if (!response.ok || !Array.isArray(payload?.data)) {
+      logger?.warn('Directus вернул ошибку при подсчёте общего количества фото', {
+        status: response.status,
+        statusText: response.statusText,
+        payload,
+      })
+      return '?'
+    }
+
+    const rawCount = payload.data?.[0]?.count?.id ?? payload.data?.[0]?.count ?? payload.data?.[0]?.['count(id)']
+    const count = Number.parseInt(rawCount, 10)
+
+    return Number.isInteger(count) ? count : '?'
+  } catch (error) {
+    logger?.warn('Не удалось получить общее количество фото трюмов из Directus', { error: error.message })
+    return '?'
+  }
 }
 
 // TODO: Review for merge — скачиваем файл из Telegram для последующей загрузки в Directus
@@ -780,6 +936,23 @@ function sanitizeForFs(value) {
     .replace(/[\\/]/g, '_')
     .replace(/\s+/g, '_')
     .replace(/[^\w\-.А-Яа-яЁё]/g, '_')
+}
+
+function removeTrailingSlash(url) {
+  if (!url) {
+    return url
+  }
+
+  return url.endsWith('/') ? url.slice(0, -1) : url
+}
+
+async function safeJson(response, logger) {
+  try {
+    return await response.json()
+  } catch (error) {
+    logger?.warn('Не удалось распарсить ответ Directus как JSON при подсчёте фото', { error: error.message })
+    return null
+  }
 }
 
 module.exports = { registerPhotosModule }
