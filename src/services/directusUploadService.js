@@ -168,9 +168,15 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
           statusText: response.statusText,
           payload,
         })
+
+        throw new Error(`Directus не смог удалить файл: ${response.status} ${response.statusText}`)
       }
+
+      logger.info('Файл удалён в Directus', { fileId, status: response.status })
+      return true
     } catch (error) {
       logger.error('Сбой удаления файла в Directus', { error: error.message, fileId })
+      throw error
     }
   }
 
