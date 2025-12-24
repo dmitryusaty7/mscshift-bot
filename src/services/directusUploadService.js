@@ -25,6 +25,7 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
       form.append('file', buffer, {
         filename: resolvedFilename,
         contentType: effectiveMimeType,
+        knownLength: buffer.length,
       })
 
       if (title) {
