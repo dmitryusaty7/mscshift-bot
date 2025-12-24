@@ -274,6 +274,7 @@ function registerPhotosModule({
             logger,
             directusUploader,
             directusConfig,
+            directusFolders,
           })
           return
         }
@@ -352,17 +353,15 @@ function registerPhotosModule({
             logger,
           })
 
-          folderId = await directusFolders.resolveHoldFolder({
+          folderId = await getOrCreateHoldFolder({
+            directusFolders,
             shiftId: session.shiftId,
-            shiftName: session.shipName,
             holdId: session.currentHoldId,
+            shiftName: session.shipName,
             holdDisplayNumber,
+            logger,
             date: new Date(),
           })
-
-          if (logger) {
-            logger.info('Папка Directus для фото трюма получена', { folderId })
-          }
         } catch (folderError) {
           if (logger) {
             logger.error('Не удалось построить иерархию папок Directus, используем корень', {
@@ -657,6 +656,7 @@ async function removeLastPhoto({
   logger,
   directusUploader,
   directusConfig,
+  directusFolders,
 }) {
   try {
     const lastPhoto = await holdPhotosRepo.findLastPhoto({ shiftId: session.shiftId, holdId: session.currentHoldId })
@@ -669,8 +669,11 @@ async function removeLastPhoto({
       photo: lastPhoto,
       shiftId: session.shiftId,
       holdId: session.currentHoldId,
+      shiftName: session.shipName,
+      holdDisplayNumber: session.currentHoldNumber,
       directusUploader,
       holdPhotosRepo,
+      directusFolders,
       logger,
     })
 
@@ -696,7 +699,17 @@ async function removeLastPhoto({
 }
 
 // Сервис безопасного удаления фото трюма с синхронизацией локальных и Directus-данных
-async function deleteHoldPhotoSafely({ photo, shiftId, holdId, directusUploader, holdPhotosRepo, logger }) {
+async function deleteHoldPhotoSafely({
+  photo,
+  shiftId,
+  holdId,
+  shiftName,
+  holdDisplayNumber,
+  directusUploader,
+  holdPhotosRepo,
+  directusFolders,
+  logger,
+}) {
   const meta = { shiftId, holdId, holdPhotoId: photo?.id }
   const publicPath = photo?.disk_public_url || photo?.disk_path
   const directusId = extractDirectusId(publicPath)
@@ -736,6 +749,93 @@ async function deleteHoldPhotoSafely({ photo, shiftId, holdId, directusUploader,
     logger?.error('Не удалось удалить запись фото трюма из БД', { ...meta, error: error.message })
     throw error
   }
+
+  await cleanupEmptyHoldFolder({
+    shiftId,
+    holdId,
+    holdPhotosRepo,
+    directusFolders,
+    shiftName,
+    holdDisplayNumber,
+    logger,
+  })
+}
+
+// Разрешает и создаёт (только при необходимости) папку Directus для фото трюма
+async function getOrCreateHoldFolder({
+  directusFolders,
+  shiftId,
+  holdId,
+  shiftName,
+  holdDisplayNumber,
+  logger,
+  date,
+}) {
+  try {
+    // Папка создаётся только при добавлении первого фото. Directus сам вернёт существующий id,
+    // если цепочка уже была создана ранее — доп. кеш в БД больше не нужен.
+    return await directusFolders.resolveHoldFolder({
+      shiftId,
+      shiftName,
+      holdId,
+      holdDisplayNumber,
+      date,
+    })
+  } catch (error) {
+    logger?.error('Не удалось разрешить иерархию папок Directus, используем корневую папку', {
+      shiftId,
+      holdId,
+      error: error.message,
+    })
+    // Возвращаем корень как последний шанс загрузить фото без отказа пользователя
+    return process.env.DIRECTUS_UPLOAD_FOLDER_ID
+  }
+}
+
+// После удаления фото проверяем, осталась ли папка пустой, и чистим Directus при необходимости
+async function cleanupEmptyHoldFolder({
+  shiftId,
+  holdId,
+  holdPhotosRepo,
+  directusFolders,
+  shiftName,
+  holdDisplayNumber,
+  logger,
+}) {
+  const remainingCount = await getHoldPhotoCount({ shiftId, holdId, holdPhotosRepo, logger })
+
+  if (remainingCount > 0) {
+    return false
+  }
+
+  if (!directusFolders) {
+    logger?.warn('Directus не настроен, пропускаем удаление пустой папки', { shiftId, holdId })
+    return false
+  }
+
+  try {
+    // Пытаемся найти/создать цепочку и удалить конечную папку. Если цепочка сломана,
+    // Directus вернёт ошибку удаления, но мы не опираемся на БД.
+    const folderId = await directusFolders.resolveHoldFolder({
+      shiftId,
+      shiftName,
+      holdId,
+      holdDisplayNumber: holdDisplayNumber || holdId,
+      date: new Date(),
+    })
+
+    await directusFolders.deleteFolder(folderId)
+    logger?.info('Пустая папка Directus удалена после очистки фото трюма', { shiftId, holdId, folderId })
+  } catch (error) {
+    logger?.error('Не удалось удалить пустую папку Directus', {
+      shiftId,
+      holdId,
+      error: error.message,
+    })
+    return false
+  }
+
+  return true
 }
 
 async function getHoldPhotoCount({ shiftId, holdId, holdPhotosRepo, logger }) {

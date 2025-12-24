@@ -9,6 +9,7 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
   }
 
   const cache = new Map()
+  const folderLocks = new Map()
 
   async function resolveHoldFolder({ shiftId, shiftName, holdId, holdDisplayNumber, date }) {
     const currentDate = date ? new Date(date) : new Date()
@@ -16,13 +17,16 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
     const month = getRussianMonthName(currentDate.getMonth())
     const day = String(currentDate.getDate()).padStart(2, '0')
 
-    const segments = [
-      year,
-      month,
-      day,
-      `Смена ${shiftId} Судно ${sanitizeName(shiftName)}`,
-      `Трюм ${holdDisplayNumber || holdId}`,
-    ]
+    const shiftFolderName = buildShiftFolderName({ shiftNumber: shiftId, vesselName: shiftName })
+
+    if (logger) {
+      logger.info('Сформировано имя папки смены для Directus', {
+        shiftId,
+        shiftFolderName,
+      })
+    }
+
+    const segments = [year, month, day, shiftFolderName, `Трюм ${holdDisplayNumber || holdId}`]
 
     if (logger) {
       logger.info('Разрешение иерархии папок Directus для фото трюма', { segments, rootFolderId })
@@ -44,22 +48,52 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
       return cache.get(key)
     }
 
-    const existing = await findFolder(name, parentId)
+    if (folderLocks.has(key)) {
+      if (logger) {
+        logger.info('Ожидание блокировки на разрешение папки Directus', { name, parentId })
+      }
 
-    if (existing) {
-      cache.set(key, existing)
-      return existing
+      return folderLocks.get(key)
     }
 
-    const created = await createFolder(name, parentId)
-    cache.set(key, created)
-    return created
+    let startResolution
+
+    const resolutionPromise = new Promise((resolve, reject) => {
+      startResolution = async () => {
+        try {
+          const existing = await findFolder(name, parentId)
+
+          if (existing) {
+            cache.set(key, existing)
+            resolve(existing)
+            return
+          }
+
+          if (logger) {
+            logger.info('Создание папки Directus под блокировкой', { name, parentId })
+          }
+
+          const created = await createFolder(name, parentId)
+          cache.set(key, created)
+          resolve(created)
+        } catch (error) {
+          reject(error)
+        } finally {
+          folderLocks.delete(key)
+        }
+      }
+    })
+
+    folderLocks.set(key, resolutionPromise)
+    await startResolution()
+    return resolutionPromise
   }
 
   async function findFolder(name, parentId) {
     const params = new URLSearchParams()
     params.set('filter[parent][_eq]', parentId)
     params.set('filter[name][_eq]', name)
+    params.set('limit', '1')
 
     const response = await fetch(`${baseUrl}/folders?${params.toString()}`, {
       method: 'GET',
@@ -70,12 +104,14 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
 
     const payload = await safeJson(response)
 
+    const dataLength = Array.isArray(payload?.data) ? payload.data.length : null
+
     if (logger) {
       logger.info('Ответ Directus при поиске папки', {
         name,
         parentId,
         status: response.status,
-        dataLength: Array.isArray(payload?.data) ? payload.data.length : null,
+        dataLength,
       })
     }
 
@@ -83,8 +119,55 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
       throw new Error(`Directus не смог проверить существование папки ${name}`)
     }
 
+    if (dataLength > 1 && logger) {
+      logger.warn('Найдено несколько папок с одинаковым именем и родителем', {
+        name,
+        parentId,
+        dataLength,
+      })
+    }
+
     const foundId = payload?.data?.[0]?.id
     return foundId ? String(foundId) : null
+  }
+
+  async function deleteFolder(folderId) {
+    if (!folderId) {
+      return
+    }
+
+    try {
+      const response = await fetch(`${baseUrl}/folders/${folderId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      if (!response.ok) {
+        const payload = await safeJson(response)
+
+        if (logger) {
+          logger.error('Directus не смог удалить папку трюма', {
+            folderId,
+            status: response.status,
+            statusText: response.statusText,
+            payload,
+          })
+        }
+
+        throw new Error(`Directus не смог удалить папку ${folderId}`)
+      }
+
+      if (logger) {
+        logger.info('Папка Directus удалена', { folderId, status: response.status })
+      }
+    } catch (error) {
+      if (logger) {
+        logger.error('Ошибка удаления папки Directus', { folderId, error: error.message })
+      }
+      throw error
+    }
   }
 
   async function createFolder(name, parentId) {
@@ -137,6 +220,13 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
     }
   }
 
+  function buildShiftFolderName({ shiftNumber, vesselName }) {
+    const number = String(shiftNumber || '').trim()
+    const vessel = sanitizeName(vesselName)
+
+    return `С${number} ${vessel}`.trim()
+  }
+
   function sanitizeName(value) {
     const base = String(value || '').trim()
 
@@ -166,7 +256,7 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
     return months[index] || 'Неизвестный месяц'
   }
 
-  return { resolveHoldFolder }
+  return { resolveHoldFolder, deleteFolder }
 }
 
 module.exports = { createDirectusFolderService }
