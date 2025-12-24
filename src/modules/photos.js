@@ -24,8 +24,6 @@ function buildPhotosReplyKeyboard(messages, { showBack = true } = {}) {
     rows.push([{ text: messages.photos.hold.back }])
   }
 
-  rows.push([{ text: messages.photos.hub.backToShift }])
-
   return {
     keyboard: rows,
     resize_keyboard: true,
@@ -203,7 +201,7 @@ function registerPhotosModule({
       }
 
       if (session.step === PHOTO_STEPS.HUB) {
-        if (msg.text === messages.photos.hold.back || msg.text === messages.photos.hub.backToShift) {
+        if (msg.text === messages.photos.hold.back) {
           // TODO: Review for merge — возврат в меню смены из хаба
           await returnToShiftMenu({
             bot,
@@ -241,22 +239,6 @@ function registerPhotosModule({
           return
         }
 
-        if (msg.text === messages.photos.hub.backToShift) {
-          // TODO: Review for merge — возврат в меню смены из подтверждения
-          await returnToShiftMenu({
-            bot,
-            chatId,
-            telegramId,
-            session,
-            brigadiersRepo,
-            shiftsRepo,
-            messages,
-            logger,
-            openShiftMenu,
-          })
-          return
-        }
-
         return
       }
 
@@ -276,21 +258,6 @@ function registerPhotosModule({
             holdPhotosRepo,
             logger,
             withReplyKeyboard: true,
-          })
-          return
-        }
-
-        if (msg.text === messages.photos.hub.backToShift) {
-          await returnToShiftMenu({
-            bot,
-            chatId,
-            telegramId,
-            session,
-            brigadiersRepo,
-            shiftsRepo,
-            messages,
-            logger,
-            openShiftMenu,
           })
           return
         }
