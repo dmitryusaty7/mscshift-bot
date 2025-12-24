@@ -70,12 +70,14 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
 
     const payload = await safeJson(response)
 
+    const dataLength = Array.isArray(payload?.data) ? payload.data.length : null
+
     if (logger) {
       logger.info('Ответ Directus при поиске папки', {
         name,
         parentId,
         status: response.status,
-        dataLength: Array.isArray(payload?.data) ? payload.data.length : null,
+        dataLength,
       })
     }
 
@@ -83,8 +85,55 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
       throw new Error(`Directus не смог проверить существование папки ${name}`)
     }
 
+    if (dataLength > 1 && logger) {
+      logger.warn('Найдено несколько папок с одинаковым именем и родителем', {
+        name,
+        parentId,
+        dataLength,
+      })
+    }
+
     const foundId = payload?.data?.[0]?.id
     return foundId ? String(foundId) : null
+  }
+
+  async function deleteFolder(folderId) {
+    if (!folderId) {
+      return
+    }
+
+    try {
+      const response = await fetch(`${baseUrl}/folders/${folderId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+
+      if (!response.ok) {
+        const payload = await safeJson(response)
+
+        if (logger) {
+          logger.error('Directus не смог удалить папку трюма', {
+            folderId,
+            status: response.status,
+            statusText: response.statusText,
+            payload,
+          })
+        }
+
+        throw new Error(`Directus не смог удалить папку ${folderId}`)
+      }
+
+      if (logger) {
+        logger.info('Папка Directus удалена', { folderId, status: response.status })
+      }
+    } catch (error) {
+      if (logger) {
+        logger.error('Ошибка удаления папки Directus', { folderId, error: error.message })
+      }
+      throw error
+    }
   }
 
   async function createFolder(name, parentId) {
@@ -166,7 +215,7 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
     return months[index] || 'Неизвестный месяц'
   }
 
-  return { resolveHoldFolder }
+  return { resolveHoldFolder, deleteFolder }
 }
 
 module.exports = { createDirectusFolderService }
