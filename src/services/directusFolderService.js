@@ -63,6 +63,7 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
     const params = new URLSearchParams()
     params.set('filter[parent][_eq]', parentId)
     params.set('filter[name][_eq]', name)
+    params.set('limit', '1')
 
     const response = await fetch(`${baseUrl}/folders?${params.toString()}`, {
       method: 'GET',
