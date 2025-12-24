@@ -71,16 +71,9 @@ function registerPhotosModule({
       if (action === 'b8:confirm') {
         // TODO: Review for merge — выводим диалог подтверждения
         await bot.answerCallbackQuery(query.id)
-        await renderConfirmDialog({ bot, chatId, session, messages, holdPhotosRepo, logger })
-        return
-      }
-
-      if (action === 'b8:confirm:back') {
-        // TODO: Review for merge — возвращаемся в список трюмов из диалога подтверждения
-        session.step = PHOTO_STEPS.HUB
+        session.step = PHOTO_STEPS.CONFIRM
         photoSessions.set(telegramId, session)
-        await bot.answerCallbackQuery(query.id)
-        await renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard: true })
+        await renderConfirmDialog({ bot, chatId, session, messages, holdPhotosRepo, logger })
         return
       }
 
@@ -124,23 +117,6 @@ function registerPhotosModule({
         photoSessions.set(telegramId, session)
         await bot.answerCallbackQuery(query.id)
         await renderHold({ bot, chatId, session, messages, holdPhotosRepo, logger })
-        return
-      }
-
-      if (action === 'shift:photos:back') {
-        // TODO: Review for merge — inline-возврат к меню смены из хаба
-        await bot.answerCallbackQuery(query.id)
-        await returnToShiftMenu({
-          bot,
-          chatId,
-          telegramId,
-          session,
-          brigadiersRepo,
-          shiftsRepo,
-          messages,
-          logger,
-          openShiftMenu,
-        })
         return
       }
 
@@ -216,6 +192,36 @@ function registerPhotosModule({
             logger,
             openShiftMenu,
           })
+        }
+
+        return
+      }
+
+      if (session.step === PHOTO_STEPS.CONFIRM) {
+        if (msg.text === messages.photos.confirm.back) {
+          // TODO: Review for merge — возврат к списку трюмов из подтверждения
+          session.step = PHOTO_STEPS.HUB
+          session.currentHoldId = null
+          session.currentHoldNumber = null
+          photoSessions.set(telegramId, session)
+          await renderHub({ bot, chatId, session, messages, holdsRepo, logger, withReplyKeyboard: true })
+          return
+        }
+
+        if (msg.text === messages.photos.hub.backToShift) {
+          // TODO: Review for merge — возврат в меню смены из подтверждения
+          await returnToShiftMenu({
+            bot,
+            chatId,
+            telegramId,
+            session,
+            brigadiersRepo,
+            shiftsRepo,
+            messages,
+            logger,
+            openShiftMenu,
+          })
+          return
         }
 
         return
@@ -471,9 +477,8 @@ async function renderHub({ bot, chatId, session, messages, holdsRepo, logger, wi
     })
 
     inline.push([{ text: messages.photos.hub.confirm, callback_data: 'b8:confirm' }])
-    inline.push([{ text: messages.photos.hub.backInline, callback_data: 'shift:photos:back' }])
 
-    await bot.sendMessage(chatId, messages.photos.hub.text, {
+    await bot.sendMessage(chatId, messages.photos.hub.prompt, {
       reply_markup: {
         inline_keyboard: inline,
       },
@@ -523,10 +528,17 @@ async function renderConfirmDialog({ bot, chatId, session, messages, holdPhotosR
 
     await bot.sendMessage(chatId, text, {
       reply_markup: {
-        inline_keyboard: [
-          [{ text: messages.photos.confirm.approve, callback_data: 'b8:confirm:yes' }],
-          [{ text: messages.photos.confirm.back, callback_data: 'b8:confirm:back' }],
+        inline_keyboard: [[{ text: messages.photos.confirm.approve, callback_data: 'b8:confirm:yes' }]],
+      },
+    })
+
+    await bot.sendMessage(chatId, messages.photos.confirm.back, {
+      reply_markup: {
+        keyboard: [
+          [{ text: messages.photos.confirm.back }],
+          [{ text: messages.photos.hub.backToShift }],
         ],
+        resize_keyboard: true,
       },
     })
   } catch (error) {
