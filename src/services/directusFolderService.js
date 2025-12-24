@@ -16,13 +16,16 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
     const month = getRussianMonthName(currentDate.getMonth())
     const day = String(currentDate.getDate()).padStart(2, '0')
 
-    const segments = [
-      year,
-      month,
-      day,
-      `Смена ${shiftId} Судно ${sanitizeName(shiftName)}`,
-      `Трюм ${holdDisplayNumber || holdId}`,
-    ]
+    const shiftFolderName = buildShiftFolderName({ shiftNumber: shiftId, vesselName: shiftName })
+
+    if (logger) {
+      logger.info('Сформировано имя папки смены для Directus', {
+        shiftId,
+        shiftFolderName,
+      })
+    }
+
+    const segments = [year, month, day, shiftFolderName, `Трюм ${holdDisplayNumber || holdId}`]
 
     if (logger) {
       logger.info('Разрешение иерархии папок Directus для фото трюма', { segments, rootFolderId })
@@ -184,6 +187,13 @@ function createDirectusFolderService({ baseUrl, token, rootFolderId, logger }) {
 
       return null
     }
+  }
+
+  function buildShiftFolderName({ shiftNumber, vesselName }) {
+    const number = String(shiftNumber || '').trim()
+    const vessel = sanitizeName(vesselName)
+
+    return `С${number} ${vessel}`.trim()
   }
 
   function sanitizeName(value) {
