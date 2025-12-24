@@ -1,6 +1,7 @@
 // TODO: Review for merge — сервис загрузки фото трюмов в Directus через REST API
 const FormData = require('form-data')
 const path = require('path')
+const { request } = require('undici')
 
 function createDirectusUploadService({ baseUrl, token, logger }) {
   // Фото НЕ сохраняются напрямую на диск. Directus управляет хранением файлов самостоятельно через API.
@@ -21,13 +22,6 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
 
       const form = new FormData()
 
-      logger.info('Начало загрузки файла в Directus', {
-        folderId: targetFolderId,
-        filename: resolvedFilename,
-        mimeType: effectiveMimeType,
-        bufferSize: buffer?.length,
-      })
-
       form.append('file', buffer, {
         filename: resolvedFilename,
         contentType: effectiveMimeType,
@@ -37,42 +31,111 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
         form.append('title', title)
       }
 
-      form.append('folder', String(targetFolderId))
+      if (targetFolderId) {
+        form.append('folder', String(targetFolderId))
+      }
 
-      const response = await fetch(`${baseUrl}/files`, {
+      const contentLength = await getFormLength(form)
+
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        ...form.getHeaders(),
+        'Content-Length': contentLength,
+      }
+
+      logger.info('Directus upload multipart prepared', {
+        folderId: targetFolderId,
+        filename: resolvedFilename,
+        mimeType: effectiveMimeType,
+        bufferSize: buffer?.length,
+      })
+
+      const response = await request(`${baseUrl}/files`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          ...form.getHeaders(),
-        },
+        headers,
         body: form,
       })
 
-      const payload = await safeJson(response)
+      const rawText = await streamToString(response.body)
+      let payload
 
-      logger.info('Ответ Directus на загрузку файла', {
-        status: response.status,
-        statusText: response.statusText,
-        dataId: payload?.data?.id,
-      })
-
-      if (!response.ok) {
-        logger.error('Directus вернул ошибку при загрузке файла', {
-          status: response.status,
-          statusText: response.statusText,
-          payload,
-          errors: payload?.errors,
+      try {
+        payload = JSON.parse(rawText)
+      } catch (error) {
+        logger.error('Directus вернул не-JSON ответ при загрузке файла', {
+          error: error.message,
+          rawText,
         })
-        throw new Error('Directus не смог принять файл')
+        throw new Error(`Directus returned non-JSON response: ${rawText}`)
+      }
+
+      if (response.statusCode < 200 || response.statusCode >= 300 || !payload?.data?.id) {
+        logger.error('Directus upload failed', {
+          status: response.statusCode,
+          payload,
+        })
+        throw new Error('Directus upload failed')
       }
 
       const normalized = normalizePayload(payload)
 
-      logger.info('Файл успешно загружен в Directus', { status: response.status, id: normalized.id })
+      logger.info('Directus upload succeeded', {
+        status: response.statusCode,
+        id: normalized.id,
+      })
 
       return normalized
     } catch (error) {
       logger.error('Сбой загрузки фото в Directus', { error: error.message })
+      throw error
+    }
+  }
+
+  async function patchFileMeta(fileId, { folder, title, filename_download }) {
+    if (!fileId) {
+      throw new Error('Не передан идентификатор файла Directus для обновления метаданных')
+    }
+
+    try {
+      const response = await request(`${baseUrl}/files/${fileId}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ folder, title, filename_download }),
+      })
+
+      const rawText = await streamToString(response.body)
+      let payload
+
+      try {
+        payload = JSON.parse(rawText)
+      } catch (error) {
+        logger.error('Directus вернул не-JSON ответ при обновлении файла', {
+          error: error.message,
+          rawText,
+        })
+        throw new Error(`Directus returned non-JSON response: ${rawText}`)
+      }
+
+      if (response.statusCode < 200 || response.statusCode >= 300 || !payload?.data?.id) {
+        logger.error('Directus patch failed', {
+          status: response.statusCode,
+          payload,
+        })
+        throw new Error('Directus patch failed')
+      }
+
+      logger.info('Directus файл обновлён', {
+        fileId,
+        status: response.statusCode,
+        folder,
+      })
+
+      return payload.data
+    } catch (error) {
+      logger.error('Сбой обновления метаданных файла в Directus', { error: error.message, fileId })
       throw error
     }
   }
@@ -145,7 +208,30 @@ function createDirectusUploadService({ baseUrl, token, logger }) {
     return base.replace(/[\\]/g, '_')
   }
 
-  return { uploadFile, uploadBuffer, deleteFile }
+  function getFormLength(form) {
+    return new Promise((resolve, reject) => {
+      form.getLength((err, length) => {
+        if (err) {
+          reject(err)
+          return
+        }
+
+        resolve(length)
+      })
+    })
+  }
+
+  async function streamToString(stream) {
+    const chunks = []
+
+    for await (const chunk of stream) {
+      chunks.push(Buffer.from(chunk))
+    }
+
+    return Buffer.concat(chunks).toString('utf8')
+  }
+
+  return { uploadFile, uploadBuffer, deleteFile, patchFileMeta }
 }
 
 module.exports = { createDirectusUploadService }

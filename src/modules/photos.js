@@ -303,6 +303,7 @@ function registerPhotosModule({
 
       if (directusUploader && directusFolders) {
         let folderId = process.env.DIRECTUS_UPLOAD_FOLDER_ID
+        let holdDisplayNumber = session.currentHoldId
 
         try {
           if (logger) {
@@ -313,10 +314,17 @@ function registerPhotosModule({
             })
           }
 
+          holdDisplayNumber = await resolveHoldDisplayNumber({
+            holdsRepo,
+            holdId: session.currentHoldId,
+            logger,
+          })
+
           folderId = await directusFolders.resolveHoldFolder({
             shiftId: session.shiftId,
             shiftName: session.shipName,
             holdId: session.currentHoldId,
+            holdDisplayNumber,
             date: new Date(),
           })
 
@@ -343,6 +351,12 @@ function registerPhotosModule({
           })
 
           const fileId = uploaded.id
+
+          await directusUploader.patchFileMeta(fileId, {
+            folder: folderId,
+            title: `Смена ${session.shiftId} / Трюм ${holdDisplayNumber}`,
+            filename_download: path.basename(downloaded.fileName || 'photo.jpg'),
+          })
 
           diskPath = `/assets/${fileId}`
           diskPublicUrl = `${directusConfig.baseUrl}${diskPath}`
@@ -684,6 +698,34 @@ async function savePhotoLocally({ buffer, shiftId, holdId, shipName, fileName, l
   }
 
   return fullPath
+}
+
+async function resolveHoldDisplayNumber({ holdsRepo, holdId, logger }) {
+  try {
+    const hold = await holdsRepo.findById(holdId)
+    const candidates = ['number', 'hold_number', 'index', 'order', 'seq']
+
+    for (const key of candidates) {
+      const value = hold?.[key]
+      const parsed = Number.parseInt(value, 10)
+
+      if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 7) {
+        return parsed
+      }
+    }
+
+    if (logger) {
+      logger.warn('Не удалось определить номер трюма 1..7, используем идентификатор', { holdId })
+    }
+
+    return holdId
+  } catch (error) {
+    if (logger) {
+      logger.error('Сбой определения номера трюма, используем идентификатор', { error: error.message, holdId })
+    }
+
+    return holdId
+  }
 }
 
 // TODO: Review for merge — делаем имя файла и судна безопасными для ФС
