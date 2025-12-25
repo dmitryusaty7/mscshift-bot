@@ -15,8 +15,8 @@ function parseFullName(input) {
   const raw = (input ?? '').trim()
   const tokens = raw.split(/\s+/).filter(Boolean)
 
-  if (tokens.length < 2) {
-    return { ok: false, errorMessage: 'Введите Фамилию и Имя через пробел' }
+  if (tokens.length !== 2) {
+    return { ok: false, errorMessage: 'Введите ровно два слова: Фамилию и Имя через пробел' }
   }
 
   const surnameRaw = tokens[0]

@@ -5,13 +5,9 @@ const { parseFullName } = require('../utils/name-parser')
 const CREW_STEPS = {
   INTRO: 'INTRO',
   HUB: 'HUB',
-  DEPUTY_SURNAME: 'DEPUTY_SURNAME',
-  DEPUTY_NAME: 'DEPUTY_NAME',
-  DEPUTY_PATRONYMIC: 'DEPUTY_PATRONYMIC',
+  DEPUTY_FULLNAME: 'DEPUTY_FULLNAME',
   DEPUTY_CONFIRM: 'DEPUTY_CONFIRM',
-  DRIVER_SURNAME: 'DRIVER_SURNAME',
-  DRIVER_NAME: 'DRIVER_NAME',
-  DRIVER_PATRONYMIC: 'DRIVER_PATRONYMIC',
+  DRIVER_FULLNAME: 'DRIVER_FULLNAME',
   DRIVER_CONFIRM: 'DRIVER_CONFIRM',
   WORKER_FULLNAME: 'WORKER_FULLNAME',
   WORKER_CONFIRM: 'WORKER_CONFIRM',
@@ -100,6 +96,12 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
         return
       }
 
+      if (action.startsWith('crew:input:cancel:')) {
+        await bot.answerCallbackQuery(query.id)
+        await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger, withKeyboard: true })
+        return
+      }
+
       if (action.startsWith('crew:input:edit:')) {
         await bot.answerCallbackQuery(query.id)
         const role = action.split(':')[3]
@@ -163,9 +165,8 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
       case CREW_STEPS.INTRO:
         await handleIntroNavigation({ bot, chatId, telegramId, text: msg.text, session, crewRepo, messages, logger })
         break
-      case CREW_STEPS.DEPUTY_SURNAME:
-      case CREW_STEPS.DRIVER_SURNAME:
-        await handleSurnameInput({
+      case CREW_STEPS.DEPUTY_FULLNAME:
+        await handleDeputyFullNameInput({
           bot,
           chatId,
           telegramId,
@@ -176,22 +177,8 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
           crewRepo,
         })
         break
-      case CREW_STEPS.DEPUTY_NAME:
-      case CREW_STEPS.DRIVER_NAME:
-        await handleNameInput({
-          bot,
-          chatId,
-          telegramId,
-          text: msg.text,
-          session,
-          messages,
-          logger,
-          crewRepo,
-        })
-        break
-      case CREW_STEPS.DEPUTY_PATRONYMIC:
-      case CREW_STEPS.DRIVER_PATRONYMIC:
-        await handlePatronymicInput({
+      case CREW_STEPS.DRIVER_FULLNAME:
+        await handleDriverFullNameInput({
           bot,
           chatId,
           telegramId,
@@ -343,8 +330,8 @@ async function renderHub({ bot, chatId, telegramId, session, crewRepo, messages,
 // Русский комментарий: запуск пошагового ввода ФИО для роли
 async function startFioFlow({ bot, chatId, telegramId, session, role, messages }) {
   const nextStep = {
-    deputy: CREW_STEPS.DEPUTY_SURNAME,
-    driver: CREW_STEPS.DRIVER_SURNAME,
+    deputy: CREW_STEPS.DEPUTY_FULLNAME,
+    driver: CREW_STEPS.DRIVER_FULLNAME,
     worker: CREW_STEPS.WORKER_FULLNAME,
   }[role]
 
@@ -358,6 +345,7 @@ async function startFioFlow({ bot, chatId, telegramId, session, role, messages }
         surname: '',
         name: '',
         patronymic: '',
+        formatted: '',
       },
     },
   })
@@ -367,7 +355,12 @@ async function startFioFlow({ bot, chatId, telegramId, session, role, messages }
     return
   }
 
-  await askSurname({ bot, chatId, telegramId, role, messages })
+  if (role === 'driver') {
+    await askDriverFullName({ bot, chatId, telegramId, messages })
+    return
+  }
+
+  await askDeputyFullName({ bot, chatId, telegramId, messages })
 }
 
 // Русский комментарий: обработка выбора на интро-экране
@@ -382,33 +375,9 @@ async function handleIntroNavigation({ bot, chatId, telegramId, text, session, c
   }
 }
 
-// Русский комментарий: запрос фамилии для роли (водитель/заместитель)
-async function askSurname({ bot, chatId, telegramId, role, messages }) {
-  const promptMap = {
-    deputy: messages.crew.deputy.askSurname,
-    driver: messages.crew.driver.askSurname,
-  }
-
-  await bot.sendMessage(chatId, promptMap[role], {
-    reply_markup: {
-      keyboard: [
-        role === 'deputy' ? [{ text: messages.crew.deputy.skipButton }] : null,
-        [{ text: messages.navigation.back }],
-        [{ text: messages.crew.backToShiftMenuButton }],
-      ].filter(Boolean),
-      resize_keyboard: true,
-    },
-  })
-}
-
-// Русский комментарий: запрос имени для роли
-async function askName({ bot, chatId, role, messages }) {
-  const promptMap = {
-    deputy: messages.crew.deputy.askName,
-    driver: messages.crew.driver.askName,
-  }
-
-  await bot.sendMessage(chatId, promptMap[role], {
+// Русский комментарий: запрос полного имени заместителя одной строкой
+async function askDeputyFullName({ bot, chatId, telegramId, messages }) {
+  await bot.sendMessage(chatId, messages.crew.deputy.askFullName, {
     reply_markup: {
       keyboard: [
         [{ text: messages.navigation.back }],
@@ -419,17 +388,11 @@ async function askName({ bot, chatId, role, messages }) {
   })
 }
 
-// Русский комментарий: запрос отчества для роли
-async function askPatronymic({ bot, chatId, role, messages }) {
-  const promptMap = {
-    deputy: messages.crew.deputy.askPatronymic,
-    driver: messages.crew.driver.askPatronymic,
-  }
-
-  await bot.sendMessage(chatId, promptMap[role], {
+// Русский комментарий: запрос полного имени водителя
+async function askDriverFullName({ bot, chatId, telegramId, messages }) {
+  await bot.sendMessage(chatId, messages.crew.driver.askFullName, {
     reply_markup: {
       keyboard: [
-        [{ text: messages.crew.deputy.skipButton }],
         [{ text: messages.navigation.back }],
         [{ text: messages.crew.backToShiftMenuButton }],
       ],
@@ -438,8 +401,8 @@ async function askPatronymic({ bot, chatId, role, messages }) {
   })
 }
 
-// Русский комментарий: обработка ввода фамилии
-async function handleSurnameInput({ bot, chatId, telegramId, text, session, messages, logger, crewRepo }) {
+// Русский комментарий: обработка ввода полного имени заместителя одной строкой
+async function handleDeputyFullNameInput({ bot, chatId, telegramId, text, session, messages, logger, crewRepo }) {
   const role = session.data.currentInput?.role
 
   if (!role) {
@@ -447,119 +410,80 @@ async function handleSurnameInput({ bot, chatId, telegramId, text, session, mess
     return
   }
 
-  if (role === 'deputy' && text === messages.crew.deputy.skipButton) {
-    await clearDeputyHandler({ bot, chatId, telegramId, session, messages, crewRepo, logger })
-    return
-  }
+  const parsed = parseFullName(text)
 
-  if (!isValidNamePart(text)) {
-    await bot.sendMessage(chatId, messages.crew.validationError)
-    await askSurname({ bot, chatId, telegramId, role, messages })
+  if (!parsed.ok) {
+    await bot.sendMessage(chatId, parsed.errorMessage)
+    await askDeputyFullName({ bot, chatId, telegramId, messages })
     return
   }
 
   const updatedSession = {
     ...session,
-    step: {
-      deputy: CREW_STEPS.DEPUTY_NAME,
-      driver: CREW_STEPS.DRIVER_NAME,
-    }[role],
+    step: CREW_STEPS.DEPUTY_CONFIRM,
     data: {
       ...session.data,
       currentInput: {
-        ...session.data.currentInput,
         role,
-        surname: normalizeName(text),
-      },
-    },
-  }
-
-  crewSessions.set(telegramId, updatedSession)
-  await askName({ bot, chatId, role, messages })
-}
-
-// Русский комментарий: обработка ввода имени
-async function handleNameInput({ bot, chatId, telegramId, text, session, messages, crewRepo, logger }) {
-  const role = session.data.currentInput?.role
-
-  if (!role) {
-    await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
-    return
-  }
-
-  if (!isValidNamePart(text)) {
-    await bot.sendMessage(chatId, messages.crew.validationError)
-    await askName({ bot, chatId, role, messages })
-    return
-  }
-
-  const updatedSession = {
-    ...session,
-    step: {
-      deputy: CREW_STEPS.DEPUTY_PATRONYMIC,
-      driver: CREW_STEPS.DRIVER_PATRONYMIC,
-    }[role],
-    data: {
-      ...session.data,
-      currentInput: {
-        ...session.data.currentInput,
-        name: normalizeName(text),
-      },
-    },
-  }
-
-  crewSessions.set(telegramId, updatedSession)
-  await askPatronymic({ bot, chatId, role, messages })
-}
-
-// Русский комментарий: обработка ввода отчества или пропуска
-async function handlePatronymicInput({ bot, chatId, telegramId, text, session, messages, logger, crewRepo }) {
-  const role = session.data.currentInput?.role
-
-  if (!role) {
-    await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
-    return
-  }
-
-  const skip = text === messages.crew.deputy.skipButton
-
-  if (!skip && text && !isValidNamePart(text)) {
-    await bot.sendMessage(chatId, messages.crew.validationError)
-    await askPatronymic({ bot, chatId, role, messages })
-    return
-  }
-
-  const patronymic = skip ? '' : normalizeName(text)
-  const fio = formatFio({
-    surname: session.data.currentInput?.surname,
-    name: session.data.currentInput?.name,
-    patronymic,
-  })
-
-  const updatedSession = {
-    ...session,
-    step: {
-      deputy: CREW_STEPS.DEPUTY_CONFIRM,
-      driver: CREW_STEPS.DRIVER_CONFIRM,
-    }[role],
-    data: {
-      ...session.data,
-      currentInput: {
-        ...session.data.currentInput,
-        patronymic,
-        formatted: fio,
+        surname: parsed.surname,
+        name: parsed.name,
+        patronymic: '',
+        formatted: parsed.normalizedFullName,
       },
     },
   }
 
   crewSessions.set(telegramId, updatedSession)
 
-  await bot.sendMessage(chatId, messages.crew.inputPreview(fio), {
-    parse_mode: 'HTML',
+  await bot.sendMessage(chatId, messages.crew.deputy.confirmAdd(parsed.normalizedFullName), {
     reply_markup: {
       inline_keyboard: [[
-        { text: messages.crew.buttons.inputConfirm, callback_data: `crew:input:confirm:${role}` },
-        { text: messages.crew.buttons.inputEdit, callback_data: `crew:input:edit:${role}` },
+        { text: messages.crew.buttons.inputConfirm, callback_data: 'crew:input:confirm:deputy' },
+        { text: messages.navigation.back, callback_data: 'crew:input:cancel:deputy' },
+      ]],
+    },
+  })
+}
+
+// Русский комментарий: обработка полного ФИО водителя одной строкой
+async function handleDriverFullNameInput({ bot, chatId, telegramId, text, session, messages, logger, crewRepo }) {
+  const role = session.data.currentInput?.role
+
+  if (!role) {
+    await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
+    return
+  }
+
+  const parsed = parseFullName(text)
+
+  if (!parsed.ok) {
+    await bot.sendMessage(chatId, parsed.errorMessage)
+    await askDriverFullName({ bot, chatId, telegramId, messages })
+    return
+  }
+
+  const updatedSession = {
+    ...session,
+    step: CREW_STEPS.DRIVER_CONFIRM,
+    data: {
+      ...session.data,
+      currentInput: {
+        role,
+        surname: parsed.surname,
+        name: parsed.name,
+        patronymic: '',
+        formatted: parsed.normalizedFullName,
+      },
+    },
+  }
+
+  crewSessions.set(telegramId, updatedSession)
+
+  await bot.sendMessage(chatId, messages.crew.driver.confirmAdd(parsed.normalizedFullName), {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: messages.crew.buttons.inputConfirm, callback_data: 'crew:input:confirm:driver' },
+        { text: messages.navigation.back, callback_data: 'crew:input:cancel:driver' },
       ]],
     },
   })
@@ -657,8 +581,8 @@ async function restartRoleInput({ bot, chatId, telegramId, session, role, messag
   const updatedSession = {
     ...session,
     step: {
-      deputy: CREW_STEPS.DEPUTY_SURNAME,
-      driver: CREW_STEPS.DRIVER_SURNAME,
+      deputy: CREW_STEPS.DEPUTY_FULLNAME,
+      driver: CREW_STEPS.DRIVER_FULLNAME,
       worker: CREW_STEPS.WORKER_FULLNAME,
     }[role],
     data: {
@@ -668,6 +592,7 @@ async function restartRoleInput({ bot, chatId, telegramId, session, role, messag
         surname: '',
         name: '',
         patronymic: '',
+        formatted: '',
       },
     },
   }
@@ -675,8 +600,10 @@ async function restartRoleInput({ bot, chatId, telegramId, session, role, messag
   crewSessions.set(telegramId, updatedSession)
   if (role === 'worker') {
     await askWorkerFullName({ bot, chatId, telegramId, messages })
+  } else if (role === 'driver') {
+    await askDriverFullName({ bot, chatId, telegramId, messages })
   } else {
-    await askSurname({ bot, chatId, telegramId, role, messages })
+    await askDeputyFullName({ bot, chatId, telegramId, messages })
   }
 }
 
@@ -689,10 +616,11 @@ async function saveCurrentInput({ bot, chatId, telegramId, session, role, crewRe
     return
   }
 
-  const fio = input.formatted || formatFio(input)
+  const fio = ['driver', 'deputy'].includes(role) ? input.formatted : input.formatted || formatFio(input)
 
   try {
     if (role === 'driver') {
+      logger.info('Сохраняем водителя', { driverFullName: fio, shiftId: session.data.shiftId })
       const crew = await crewRepo.getCrewByShift(session.data.shiftId)
       const driver = await crewRepo.findOrCreateDriver(fio)
 
@@ -705,6 +633,7 @@ async function saveCurrentInput({ bot, chatId, telegramId, session, role, crewRe
       await crewRepo.recalcCrewFilled(session.data.shiftId)
       await bot.sendMessage(chatId, messages.crew.driver.saved(fio))
     } else if (role === 'deputy') {
+      logger.info('Сохраняем заместителя', { deputyFullName: fio, shiftId: session.data.shiftId })
       const existingCrew = await crewRepo.getCrewByShift(session.data.shiftId)
 
       if (!existingCrew.driver) {
@@ -879,15 +808,6 @@ function buildHubKeyboard({ crew, ready, messages }) {
   }
 
   return keyboard
-}
-
-// Русский комментарий: валидация части ФИО (кириллица, первая буква заглавная, допускается дефис)
-function isValidNamePart(value) {
-  if (!value) {
-    return false
-  }
-
-  return /^[А-ЯЁ][а-яё-]+$/u.test(value.trim())
 }
 
 // Русский комментарий: нормализация пробелов в ФИО
