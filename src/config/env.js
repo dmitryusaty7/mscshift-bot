@@ -4,7 +4,7 @@ require('dotenv').config()
 // Проверяем обязательные переменные окружения и формируем конфиг
 function validateEnv() {
   // TODO: Review for merge — базовая валидация окружения
-  const config = {
+const config = {
     bot: {
       token: requireEnv('TELEGRAM_BOT_TOKEN'),
     },
@@ -30,6 +30,13 @@ function validateEnv() {
     }
   } else {
     config.directus = null
+  }
+
+  const shiftReportChatId = readEnvSoft('SHIFT_REPORT_CHAT_ID')
+  const parsedReportChatId = shiftReportChatId ? Number(shiftReportChatId) : null
+
+  config.reports = {
+    shiftReportChatId: Number.isFinite(parsedReportChatId) ? parsedReportChatId : null,
   }
 
   return config

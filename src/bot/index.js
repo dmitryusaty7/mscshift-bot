@@ -10,10 +10,34 @@ const { registerMaterialsModule } = require('../modules/materials')
 const { registerExpensesModule } = require('../modules/expenses')
 // TODO: Review for merge — регистрация блока 8 «Фото трюмов»
 const { registerPhotosModule } = require('../modules/photos')
+const { createShiftReportService } = require('../services/shiftReportService')
 
 // Создаём экземпляр бота и регистрируем обработчики
-function createBot({ token, logger, repositories, messages, directusClient, directusConfig }) {
+function createBot({
+  token,
+  logger,
+  repositories,
+  messages,
+  directusClient,
+  directusConfig,
+  reportChatId,
+}) {
   const bot = new TelegramBot(token, { polling: true })
+
+  const shiftReportService = createShiftReportService({
+    bot,
+    logger,
+    repositories: {
+      shifts: repositories.shifts,
+      brigadiers: repositories.brigadiers,
+      materials: repositories.materials,
+      wages: repositories.wages,
+      expenses: repositories.expenses,
+      holdPhotos: repositories.holdPhotos,
+      crew: repositories.crew,
+    },
+    reportChatId,
+  })
 
   const crewModule = registerCrewModule({
     bot,
@@ -118,6 +142,7 @@ function createBot({ token, logger, repositories, messages, directusClient, dire
     shiftsRepo: repositories.shifts,
     logger,
     messages,
+    shiftReportService,
     returnToMainPanel: ({ chatId, telegramId }) =>
       openMainPanel({
         bot,

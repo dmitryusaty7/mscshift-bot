@@ -4,6 +4,7 @@ const { randomUUID } = require('crypto')
 function createBrigadiersRepo(pool) {
   return {
     findByTelegramId,
+    findById,
     create,
   }
 
@@ -17,6 +18,19 @@ function createBrigadiersRepo(pool) {
     `
 
     const { rows } = await pool.query(query, [telegramId])
+    return rows[0] || null
+  }
+
+  // Ищем бригадира по первичному идентификатору
+  async function findById(id) {
+    const query = `
+      SELECT *
+      FROM brigadiers
+      WHERE id = $1
+      LIMIT 1
+    `
+
+    const { rows } = await pool.query(query, [id])
     return rows[0] || null
   }
 

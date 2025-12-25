@@ -29,6 +29,7 @@ function registerShiftMenuModule({
   shiftsRepo,
   messages,
   logger,
+  shiftReportService,
   returnToMainPanel,
   openCrewScene,
   openSalaryScene,
@@ -152,17 +153,18 @@ function registerShiftMenuModule({
         })
         break
       case SHIFT_STEPS.WAITING_COMPLETION_CONFIRM:
-        await handleShiftCompletionConfirm({
-          bot,
-          chatId,
-          telegramId,
-          text: msg.text,
-          messages,
-          session,
-          shiftsRepo,
-          logger,
-          returnToMainPanel,
-        })
+      await handleShiftCompletionConfirm({
+        bot,
+        chatId,
+        telegramId,
+        text: msg.text,
+        messages,
+        session,
+        shiftsRepo,
+        shiftReportService,
+        logger,
+        returnToMainPanel,
+      })
         break
       default:
         break
@@ -634,6 +636,7 @@ async function handleShiftCompletionConfirm({
   messages,
   session,
   shiftsRepo,
+  shiftReportService,
   logger,
   returnToMainPanel,
 }) {
@@ -681,6 +684,18 @@ async function handleShiftCompletionConfirm({
     logger?.error('Не удалось завершить смену', { error: error.message, telegramId, shiftId })
     await bot.sendMessage(chatId, messages.systemError)
     return
+  }
+
+  if (shiftReportService?.sendShiftCompletionReport) {
+    try {
+      await shiftReportService.sendShiftCompletionReport(shiftId)
+    } catch (error) {
+      logger?.warn('Не удалось отправить отчёт о завершении смены', {
+        error: error.message,
+        telegramId,
+        shiftId,
+      })
+    }
   }
 
   await bot.sendMessage(chatId, messages.shiftMenu.completed)

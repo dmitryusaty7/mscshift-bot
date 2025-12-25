@@ -7,6 +7,8 @@ function createShiftsRepo(pool) {
     getActiveByBrigadier,
     findActiveByIdAndBrigadier,
     markPhotosFilled,
+    getByIdWithShip,
+    saveGroupMessageId,
     closeShift,
   }
 
@@ -167,6 +169,39 @@ function createShiftsRepo(pool) {
     `
 
     await pool.query(query, [shiftId])
+  }
+
+  // Загружаем смену с названием судна по идентификатору
+  async function getByIdWithShip(shiftId) {
+    const query = `
+      SELECT s.id,
+             s.date,
+             s.brigadier_id,
+             s.ship_id,
+             s.holds_count,
+             s.is_closed,
+             s.group_message_id,
+             sh.name AS ship_name
+      FROM shifts s
+      JOIN ships sh ON sh.id = s.ship_id
+      WHERE s.id = $1
+      LIMIT 1
+    `
+
+    const { rows } = await pool.query(query, [shiftId])
+    return rows[0] || null
+  }
+
+  // Сохраняем идентификатор группового сообщения с отчётом
+  async function saveGroupMessageId({ shiftId, messageId }) {
+    const query = `
+      UPDATE shifts
+      SET group_message_id = $2,
+          updated_at = now()
+      WHERE id = $1
+    `
+
+    await pool.query(query, [shiftId, messageId])
   }
 }
 
