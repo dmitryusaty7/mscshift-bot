@@ -189,6 +189,18 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
           crewRepo,
         })
         break
+      case CREW_STEPS.DRIVER_FULLNAME:
+        await handleDriverFullNameInput({
+          bot,
+          chatId,
+          telegramId,
+          text: msg.text,
+          session,
+          messages,
+          logger,
+          crewRepo,
+        })
+        break
       case CREW_STEPS.WORKER_FULLNAME:
         await handleWorkerFullNameInput({
           bot,
@@ -440,6 +452,50 @@ async function handleDeputyFullNameInput({ bot, chatId, telegramId, text, sessio
       inline_keyboard: [[
         { text: messages.crew.buttons.inputConfirm, callback_data: 'crew:input:confirm:deputy' },
         { text: messages.navigation.back, callback_data: 'crew:input:cancel:deputy' },
+      ]],
+    },
+  })
+}
+
+// Русский комментарий: обработка полного ФИО водителя одной строкой
+async function handleDriverFullNameInput({ bot, chatId, telegramId, text, session, messages, logger, crewRepo }) {
+  const role = session.data.currentInput?.role
+
+  if (!role) {
+    await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
+    return
+  }
+
+  const parsed = parseFullName(text)
+
+  if (!parsed.ok) {
+    await bot.sendMessage(chatId, parsed.errorMessage)
+    await askDriverFullName({ bot, chatId, telegramId, messages })
+    return
+  }
+
+  const updatedSession = {
+    ...session,
+    step: CREW_STEPS.DRIVER_CONFIRM,
+    data: {
+      ...session.data,
+      currentInput: {
+        role,
+        surname: parsed.surname,
+        name: parsed.name,
+        patronymic: '',
+        formatted: parsed.normalizedFullName,
+      },
+    },
+  }
+
+  crewSessions.set(telegramId, updatedSession)
+
+  await bot.sendMessage(chatId, messages.crew.driver.confirmAdd(parsed.normalizedFullName), {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: messages.crew.buttons.inputConfirm, callback_data: 'crew:input:confirm:driver' },
+        { text: messages.navigation.back, callback_data: 'crew:input:cancel:driver' },
       ]],
     },
   })
