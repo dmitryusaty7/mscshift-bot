@@ -9,9 +9,7 @@ const CREW_STEPS = {
   DEPUTY_NAME: 'DEPUTY_NAME',
   DEPUTY_PATRONYMIC: 'DEPUTY_PATRONYMIC',
   DEPUTY_CONFIRM: 'DEPUTY_CONFIRM',
-  DRIVER_SURNAME: 'DRIVER_SURNAME',
-  DRIVER_NAME: 'DRIVER_NAME',
-  DRIVER_PATRONYMIC: 'DRIVER_PATRONYMIC',
+  DRIVER_FULLNAME: 'DRIVER_FULLNAME',
   DRIVER_CONFIRM: 'DRIVER_CONFIRM',
   WORKER_FULLNAME: 'WORKER_FULLNAME',
   WORKER_CONFIRM: 'WORKER_CONFIRM',
@@ -100,6 +98,12 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
         return
       }
 
+      if (action.startsWith('crew:input:cancel:')) {
+        await bot.answerCallbackQuery(query.id)
+        await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger, withKeyboard: true })
+        return
+      }
+
       if (action.startsWith('crew:input:edit:')) {
         await bot.answerCallbackQuery(query.id)
         const role = action.split(':')[3]
@@ -164,7 +168,6 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
         await handleIntroNavigation({ bot, chatId, telegramId, text: msg.text, session, crewRepo, messages, logger })
         break
       case CREW_STEPS.DEPUTY_SURNAME:
-      case CREW_STEPS.DRIVER_SURNAME:
         await handleSurnameInput({
           bot,
           chatId,
@@ -177,7 +180,6 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
         })
         break
       case CREW_STEPS.DEPUTY_NAME:
-      case CREW_STEPS.DRIVER_NAME:
         await handleNameInput({
           bot,
           chatId,
@@ -190,8 +192,19 @@ function registerCrewModule({ bot, logger, messages, crewRepo, shiftsRepo, briga
         })
         break
       case CREW_STEPS.DEPUTY_PATRONYMIC:
-      case CREW_STEPS.DRIVER_PATRONYMIC:
         await handlePatronymicInput({
+          bot,
+          chatId,
+          telegramId,
+          text: msg.text,
+          session,
+          messages,
+          logger,
+          crewRepo,
+        })
+        break
+      case CREW_STEPS.DRIVER_FULLNAME:
+        await handleDriverFullNameInput({
           bot,
           chatId,
           telegramId,
@@ -344,7 +357,7 @@ async function renderHub({ bot, chatId, telegramId, session, crewRepo, messages,
 async function startFioFlow({ bot, chatId, telegramId, session, role, messages }) {
   const nextStep = {
     deputy: CREW_STEPS.DEPUTY_SURNAME,
-    driver: CREW_STEPS.DRIVER_SURNAME,
+    driver: CREW_STEPS.DRIVER_FULLNAME,
     worker: CREW_STEPS.WORKER_FULLNAME,
   }[role]
 
@@ -367,6 +380,11 @@ async function startFioFlow({ bot, chatId, telegramId, session, role, messages }
     return
   }
 
+  if (role === 'driver') {
+    await askDriverFullName({ bot, chatId, telegramId, messages })
+    return
+  }
+
   await askSurname({ bot, chatId, telegramId, role, messages })
 }
 
@@ -386,7 +404,6 @@ async function handleIntroNavigation({ bot, chatId, telegramId, text, session, c
 async function askSurname({ bot, chatId, telegramId, role, messages }) {
   const promptMap = {
     deputy: messages.crew.deputy.askSurname,
-    driver: messages.crew.driver.askSurname,
   }
 
   await bot.sendMessage(chatId, promptMap[role], {
@@ -405,7 +422,6 @@ async function askSurname({ bot, chatId, telegramId, role, messages }) {
 async function askName({ bot, chatId, role, messages }) {
   const promptMap = {
     deputy: messages.crew.deputy.askName,
-    driver: messages.crew.driver.askName,
   }
 
   await bot.sendMessage(chatId, promptMap[role], {
@@ -423,13 +439,25 @@ async function askName({ bot, chatId, role, messages }) {
 async function askPatronymic({ bot, chatId, role, messages }) {
   const promptMap = {
     deputy: messages.crew.deputy.askPatronymic,
-    driver: messages.crew.driver.askPatronymic,
   }
 
   await bot.sendMessage(chatId, promptMap[role], {
     reply_markup: {
       keyboard: [
         [{ text: messages.crew.deputy.skipButton }],
+        [{ text: messages.navigation.back }],
+        [{ text: messages.crew.backToShiftMenuButton }],
+      ],
+      resize_keyboard: true,
+    },
+  })
+}
+
+// Русский комментарий: запрос полного имени водителя
+async function askDriverFullName({ bot, chatId, telegramId, messages }) {
+  await bot.sendMessage(chatId, messages.crew.driver.askFullName, {
+    reply_markup: {
+      keyboard: [
         [{ text: messages.navigation.back }],
         [{ text: messages.crew.backToShiftMenuButton }],
       ],
@@ -462,7 +490,6 @@ async function handleSurnameInput({ bot, chatId, telegramId, text, session, mess
     ...session,
     step: {
       deputy: CREW_STEPS.DEPUTY_NAME,
-      driver: CREW_STEPS.DRIVER_NAME,
     }[role],
     data: {
       ...session.data,
@@ -497,7 +524,6 @@ async function handleNameInput({ bot, chatId, telegramId, text, session, message
     ...session,
     step: {
       deputy: CREW_STEPS.DEPUTY_PATRONYMIC,
-      driver: CREW_STEPS.DRIVER_PATRONYMIC,
     }[role],
     data: {
       ...session.data,
@@ -540,7 +566,6 @@ async function handlePatronymicInput({ bot, chatId, telegramId, text, session, m
     ...session,
     step: {
       deputy: CREW_STEPS.DEPUTY_CONFIRM,
-      driver: CREW_STEPS.DRIVER_CONFIRM,
     }[role],
     data: {
       ...session.data,
@@ -560,6 +585,50 @@ async function handlePatronymicInput({ bot, chatId, telegramId, text, session, m
       inline_keyboard: [[
         { text: messages.crew.buttons.inputConfirm, callback_data: `crew:input:confirm:${role}` },
         { text: messages.crew.buttons.inputEdit, callback_data: `crew:input:edit:${role}` },
+      ]],
+    },
+  })
+}
+
+// Русский комментарий: обработка полного ФИО водителя одной строкой
+async function handleDriverFullNameInput({ bot, chatId, telegramId, text, session, messages, logger, crewRepo }) {
+  const role = session.data.currentInput?.role
+
+  if (!role) {
+    await renderHub({ bot, chatId, telegramId, session, crewRepo, messages, logger })
+    return
+  }
+
+  const parsed = parseFullName(text)
+
+  if (!parsed.ok) {
+    await bot.sendMessage(chatId, parsed.errorMessage)
+    await askDriverFullName({ bot, chatId, telegramId, messages })
+    return
+  }
+
+  const updatedSession = {
+    ...session,
+    step: CREW_STEPS.DRIVER_CONFIRM,
+    data: {
+      ...session.data,
+      currentInput: {
+        role,
+        surname: parsed.surname,
+        name: parsed.name,
+        patronymic: '',
+        formatted: parsed.normalizedFullName,
+      },
+    },
+  }
+
+  crewSessions.set(telegramId, updatedSession)
+
+  await bot.sendMessage(chatId, messages.crew.driver.confirmAdd(parsed.normalizedFullName), {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: messages.crew.buttons.inputConfirm, callback_data: 'crew:input:confirm:driver' },
+        { text: messages.navigation.back, callback_data: 'crew:input:cancel:driver' },
       ]],
     },
   })
@@ -658,7 +727,7 @@ async function restartRoleInput({ bot, chatId, telegramId, session, role, messag
     ...session,
     step: {
       deputy: CREW_STEPS.DEPUTY_SURNAME,
-      driver: CREW_STEPS.DRIVER_SURNAME,
+      driver: CREW_STEPS.DRIVER_FULLNAME,
       worker: CREW_STEPS.WORKER_FULLNAME,
     }[role],
     data: {
@@ -675,6 +744,8 @@ async function restartRoleInput({ bot, chatId, telegramId, session, role, messag
   crewSessions.set(telegramId, updatedSession)
   if (role === 'worker') {
     await askWorkerFullName({ bot, chatId, telegramId, messages })
+  } else if (role === 'driver') {
+    await askDriverFullName({ bot, chatId, telegramId, messages })
   } else {
     await askSurname({ bot, chatId, telegramId, role, messages })
   }
@@ -689,10 +760,11 @@ async function saveCurrentInput({ bot, chatId, telegramId, session, role, crewRe
     return
   }
 
-  const fio = input.formatted || formatFio(input)
+  const fio = role === 'driver' ? input.formatted : input.formatted || formatFio(input)
 
   try {
     if (role === 'driver') {
+      logger.info('Сохраняем водителя', { driverFullName: fio, shiftId: session.data.shiftId })
       const crew = await crewRepo.getCrewByShift(session.data.shiftId)
       const driver = await crewRepo.findOrCreateDriver(fio)
 
