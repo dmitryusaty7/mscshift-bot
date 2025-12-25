@@ -1,7 +1,4 @@
-const { formatDateHuman } = require('../utils/time')
-
 const DEFAULT_REPORT_CHAT_ID = -1003298300145
-const SEPARATOR = '— — — — — — — — — —'
 
 function createShiftReportService({ bot, logger, repositories, reportChatId }) {
   const targetChatId = Number.isFinite(reportChatId) ? reportChatId : DEFAULT_REPORT_CHAT_ID
@@ -26,57 +23,61 @@ function createShiftReportService({ bot, logger, repositories, reportChatId }) {
     }
 
     const brigadier = await repositories.brigadiers.findById(shift.brigadier_id)
-    const brigadierName = brigadier
-      ? `${brigadier.last_name} ${brigadier.first_name}`.trim()
-      : '—'
-
     const crew = await repositories.crew.getCrewByShift(shiftId)
     const wages = await repositories.wages.getShiftWages(shiftId)
     const materials = await repositories.materials.getShiftMaterials(shiftId)
     const expenses = await repositories.expenses.getShiftExpenses(shiftId)
     const photosCount = await repositories.holdPhotos.countTotalByShift(shiftId)
+    const holdsWithCounts = await repositories.holds.getHoldsWithCounts(shiftId)
 
-    const brigadierSalary = toNumberOrNull(wages?.brigadier_amount)
-    const deputySalary = crew?.deputy ? toNumberOrNull(wages?.deputy_amount) : null
-    const driverSalary = crew?.driver ? toNumberOrNull(wages?.driver_amount) : null
-    const workersTotal = toNumberOrNull(wages?.workers_total)
+    const brigadierSalary = toIntOrZero(wages?.brigadier_amount)
+    const deputySalary = toIntOrZero(crew?.deputy ? wages?.deputy_amount : null)
+    const driverSalary = toIntOrZero(crew?.driver ? wages?.driver_amount : null)
+    const workersTotal = toIntOrZero(wages?.workers_total)
 
-    const salaryParts = [brigadierSalary, deputySalary, driverSalary, workersTotal]
-    const totalSalary = salaryParts.reduce((acc, value) => acc + (value ?? 0), 0)
+    const salaryTotal = brigadierSalary + deputySalary + driverSalary + workersTotal
 
-    const otherExpenses = toNumberOrNull(expenses?.other_amount)
-    const expenseParts = [
-      toNumberOrNull(expenses?.food_amount),
-      toNumberOrNull(expenses?.materials_amount),
-      toNumberOrNull(expenses?.taxi_amount),
-      otherExpenses,
-    ]
-    const expensesTotal = toNumberOrNull(expenses?.total_expenses)
-    const monetaryExpenses =
-      expensesTotal != null
-        ? expensesTotal
-        : expenseParts.reduce((acc, value) => acc + (value ?? 0), 0)
+    const expenseFood = toIntOrZero(expenses?.food_amount)
+    const expenseConsumables = toIntOrZero(expenses?.materials_amount)
+    const expenseTaxi = toIntOrZero(expenses?.taxi_amount)
+    const expenseOther = toIntOrZero(expenses?.other_amount)
+    const expensesTotal = expenseFood + expenseConsumables + expenseTaxi + expenseOther
 
-    const totalExpenses = totalSalary + (monetaryExpenses ?? 0)
+    const materialsSafe = materials || {}
 
-    const message = buildShiftCompletionMessage({
-      shiftNumber: shift.id,
-      vesselName: shift.ship_name,
-      startDate: formatDateHuman(shift.date),
-      endDate: formatDateHuman(new Date()),
-      brigadierName,
-      holdsCount: shift.holds_count,
-      photosCount,
-      brigadierSalary,
-      deputySalary,
-      driverSalary,
-      totalSalary,
-      materials,
-      otherExpenses,
-      totalExpenses,
-    })
+    const reportData = {
+      shiftNumber: toIntOrZero(shift.id),
+      vesselName: shift.ship_name || '—',
+      dateStart: formatDateDDMMYYYY(shift.date),
+      dateEnd: formatDateDDMMYYYY(new Date()),
+      brigadierFullName: normalizeName(
+        brigadier ? `${brigadier.last_name} ${brigadier.first_name}` : '—',
+      ),
+      holdsCount: Array.isArray(holdsWithCounts)
+        ? holdsWithCounts.filter((hold) => toIntOrZero(hold.photos_count) > 0).length
+        : 0,
+      photosCount: toIntOrZero(photosCount),
+      salaryBrigadier: brigadierSalary,
+      salaryDeputy: deputySalary,
+      salaryDriver: driverSalary,
+      salaryWorkersTotal: workersTotal,
+      salaryTotal,
+      pvd_3: toIntOrZero(materialsSafe.pvd_3m_used),
+      pvd_6: toIntOrZero(materialsSafe.pvd_6m_used),
+      pvd_12: toIntOrZero(materialsSafe.pvd_12m_used),
+      pvd_14: toIntOrZero(materialsSafe.pvd_14m_used),
+      pvcTubes: toNumberPretty(materialsSafe.pvh_tubes_used),
+      tape: toIntOrZero(materialsSafe.tape_used),
+      expenseFood,
+      expenseConsumables,
+      expenseTaxi,
+      expenseOther,
+      expensesTotal,
+    }
 
-    logger?.info('Shift completion report prepared', { shiftId, chatId: targetChatId })
+    logger?.info('Shift completion report prepared', { shiftId, chatId: targetChatId, reportData })
+
+    const message = formatReport(reportData)
 
     try {
       const sentMessage = await bot.sendMessage(targetChatId, message)
@@ -96,126 +97,90 @@ function createShiftReportService({ bot, logger, repositories, reportChatId }) {
   }
 }
 
-function buildShiftCompletionMessage({
-  shiftNumber,
-  vesselName,
-  startDate,
-  endDate,
-  brigadierName,
-  holdsCount,
-  photosCount,
-  brigadierSalary,
-  deputySalary,
-  driverSalary,
-  totalSalary,
-  materials,
-  otherExpenses,
-  totalExpenses,
-}) {
-  const lines = []
-  lines.push(`✅ Смена №${shiftNumber} завершена`)
-  lines.push('')
-  lines.push(`Судно: ${vesselName ?? '—'}`)
-  lines.push('')
-  lines.push(`Дата начала смены: ${startDate}`)
-  lines.push(`Дата завершения смены: ${endDate}`)
-  lines.push('')
-  lines.push(`Бригадир: ${brigadierName ?? '—'}`)
-  lines.push('')
-  lines.push(SEPARATOR)
-  lines.push('')
-  lines.push('📦 Производственные данные')
-  lines.push(`• Трюмов обработано: ${formatNumericValue(holdsCount)}`)
-  lines.push(`• Фото загружено: ${formatNumericValue(photosCount)}`)
-  lines.push('')
-  lines.push(SEPARATOR)
-  lines.push('')
-  lines.push('💰 Заработная плата')
-  lines.push(`• Бригадир: ${formatCurrency(brigadierSalary)}`)
-
-  if (deputySalary != null) {
-    lines.push(`• Заместитель: ${formatCurrency(deputySalary)}`)
-  }
-
-  if (driverSalary != null) {
-    lines.push(`• Водитель: ${formatCurrency(driverSalary)}`)
-  }
-
-  lines.push(`• Итого зарплата: ${formatCurrency(totalSalary)}`)
-  lines.push('')
-
-  const materialLines = buildMaterialsBlock(materials)
-
-  if (materialLines.length) {
-    lines.push(SEPARATOR)
-    lines.push('')
-    lines.push('🧾 Материалы')
-    lines.push(...materialLines)
-    lines.push('')
-  }
-
-  if (otherExpenses != null) {
-    lines.push(SEPARATOR)
-    lines.push('')
-    lines.push('💸 Прочие расходы')
-    lines.push(`• ${formatCurrency(otherExpenses)}`)
-    lines.push('')
-  }
-
-  lines.push(SEPARATOR)
-  lines.push('')
-  lines.push('📊 Итого по смене')
-  lines.push(`• Общие расходы: ${formatCurrency(totalExpenses)}`)
+function formatReport(reportData) {
+  const lines = [
+    `Смена №${reportData.shiftNumber} завершена`,
+    '',
+    `🛳 Судно: ${reportData.vesselName}`,
+    `📅 Дата начала: ${reportData.dateStart}`,
+    `📅 Дата завершения: ${reportData.dateEnd}`,
+    `👷 Бригадир: ${reportData.brigadierFullName}`,
+    '',
+    '📦 Производство',
+    `• Трюмов: ${reportData.holdsCount}`,
+    `• Фото: ${reportData.photosCount}`,
+    '',
+    '💰 Заработная плата',
+    `• Бригадир: ${reportData.salaryBrigadier} ₽`,
+    `• Заместитель: ${reportData.salaryDeputy} ₽`,
+    `• Водитель: ${reportData.salaryDriver} ₽`,
+    `• Рабочие (всего): ${reportData.salaryWorkersTotal} ₽`,
+    `• Итого: ${reportData.salaryTotal} ₽`,
+    '',
+    '🧾 Материалы израсходованы',
+    `• ПВД (3 / 6 / 12 / 14 м): ${reportData.pvd_3} / ${reportData.pvd_6} / ${reportData.pvd_12} / ${reportData.pvd_14}`,
+    `• Трубки ПВХ: ${reportData.pvcTubes} м.п.`,
+    `• Клейкая лента: ${reportData.tape}`,
+    '',
+    '💸 Расходы',
+    `• Питание: ${reportData.expenseFood} ₽`,
+    `• Расходники: ${reportData.expenseConsumables} ₽`,
+    `• Такси: ${reportData.expenseTaxi} ₽`,
+    `• Прочее: ${reportData.expenseOther} ₽`,
+    `• Итого: ${reportData.expensesTotal} ₽`,
+    '',
+    '🤖 Отчёт сформирован автоматически',
+  ]
 
   return lines.join('\n')
 }
 
-function buildMaterialsBlock(materials) {
-  if (!materials) {
-    return []
+function toIntOrZero(value) {
+  const parsed = Number(value)
+
+  if (!Number.isFinite(parsed)) {
+    return 0
   }
 
-  const items = [
-    { label: '• Рулоны ПВД 3 м', value: materials.pvd_3m_used },
-    { label: '• Рулоны ПВД 6 м', value: materials.pvd_6m_used },
-    { label: '• Рулоны ПВД 12 м', value: materials.pvd_12m_used },
-    { label: '• Рулоны ПВД 14 м', value: materials.pvd_14m_used },
-    { label: '• Трубки ПВХ', value: materials.pvh_tubes_used },
-    { label: '• Клейкая лента', value: materials.tape_used },
-  ]
-
-  const filledItems = items.filter((item) => item.value != null)
-
-  if (!filledItems.length) {
-    return []
-  }
-
-  return filledItems.map((item) => `${item.label}: ${formatNumericValue(item.value, true)}`)
+  return Math.trunc(parsed)
 }
 
-function formatCurrency(value) {
-  if (value == null) {
+function toNumberPretty(value) {
+  const parsed = Number(value)
+
+  if (!Number.isFinite(parsed)) {
+    return 0
+  }
+
+  return Number.isInteger(parsed) ? Math.trunc(parsed) : parsed
+}
+
+function formatDateDDMMYYYY(date) {
+  const parsedDate = new Date(date)
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return ''
+  }
+
+  const day = String(parsedDate.getDate()).padStart(2, '0')
+  const month = String(parsedDate.getMonth() + 1).padStart(2, '0')
+  const year = parsedDate.getFullYear()
+
+  return `${day}.${month}.${year}`
+}
+
+function normalizeName(str) {
+  if (!str) {
     return '—'
   }
 
-  return `${value} ₽`
+  return str
+    .trim()
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : ''))
+    .filter(Boolean)
+    .join(' ')
 }
 
-function formatNumericValue(value, allowZero = false) {
-  if (value == null) {
-    return allowZero ? 0 : '—'
-  }
-
-  return value
-}
-
-function toNumberOrNull(value) {
-  if (value == null) {
-    return null
-  }
-
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-module.exports = { createShiftReportService, buildShiftCompletionMessage, DEFAULT_REPORT_CHAT_ID }
+module.exports = { createShiftReportService, DEFAULT_REPORT_CHAT_ID }
