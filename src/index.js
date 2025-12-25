@@ -16,7 +16,6 @@ const { createHoldPhotosRepo } = require('./db/hold-photos.repo')
 const { createHoldDirectusFoldersRepo } = require('./db/hold-directus-folders.repo')
 const { createLogger } = require('./utils/logger')
 const { createDirectusClient } = require('./directus')
-const { DEFAULT_REPORT_CHAT_ID } = require('./services/shiftReportService')
 
 const logger = createLogger()
 const config = validateEnv()
@@ -78,7 +77,7 @@ async function bootstrap() {
     messages,
     directusClient,
     directusConfig: config.directus,
-    reportChatId: config.reports.shiftReportChatId ?? DEFAULT_REPORT_CHAT_ID,
+    reportChatId: config.reports.reportChatId,
   })
 
   logger.info('Бот MSCShift запущен и готов принимать команды')
