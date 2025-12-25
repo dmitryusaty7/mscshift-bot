@@ -524,12 +524,6 @@ async function renderHub({ bot, chatId, session, messages, holdsRepo, holdPhotos
         inline_keyboard: inline,
       },
     })
-
-    if (withReplyKeyboard) {
-      await bot.sendMessage(chatId, '\u2060', {
-        reply_markup: buildPhotosReplyKeyboard(messages),
-      })
-    }
   } catch (error) {
     logger.error('Не удалось отрисовать хаб фото трюмов', { error: error.message })
     await bot.sendMessage(chatId, messages.systemError)
