@@ -1,11 +1,14 @@
-const DEFAULT_REPORT_CHAT_ID = -1003298300145
-
 function createShiftReportService({ bot, logger, repositories, reportChatId }) {
-  const targetChatId = Number.isFinite(reportChatId) ? reportChatId : DEFAULT_REPORT_CHAT_ID
+  const targetChatId = Number.isFinite(reportChatId) ? reportChatId : null
 
   return { sendShiftCompletionReport }
 
   async function sendShiftCompletionReport(shiftId) {
+    if (!targetChatId) {
+      logger?.warn('TELEGRAM_REPORT_CHAT_ID не задан, отправка отчёта пропущена', { shiftId })
+      return
+    }
+
     const shift = await repositories.shifts.getByIdWithShip(shiftId)
 
     if (!shift) {
@@ -27,8 +30,7 @@ function createShiftReportService({ bot, logger, repositories, reportChatId }) {
     const wages = await repositories.wages.getShiftWages(shiftId)
     const materials = await repositories.materials.getShiftMaterials(shiftId)
     const expenses = await repositories.expenses.getShiftExpenses(shiftId)
-    const photosCount = await repositories.holdPhotos.countTotalByShift(shiftId)
-    const holdsWithCounts = await repositories.holds.getHoldsWithCounts(shiftId)
+    const { holdsCount, photosCount } = await getProductionStats(shiftId)
 
     const brigadierSalary = toIntOrZero(wages?.brigadier_amount)
     const deputySalary = toIntOrZero(crew?.deputy ? wages?.deputy_amount : null)
@@ -53,9 +55,7 @@ function createShiftReportService({ bot, logger, repositories, reportChatId }) {
       brigadierFullName: normalizeName(
         brigadier ? `${brigadier.last_name} ${brigadier.first_name}` : '—',
       ),
-      holdsCount: Array.isArray(holdsWithCounts)
-        ? holdsWithCounts.filter((hold) => toIntOrZero(hold.photos_count) > 0).length
-        : 0,
+      holdsCount: toIntOrZero(holdsCount),
       photosCount: toIntOrZero(photosCount),
       salaryBrigadier: brigadierSalary,
       salaryDeputy: deputySalary,
@@ -75,11 +75,10 @@ function createShiftReportService({ bot, logger, repositories, reportChatId }) {
       expensesTotal,
     }
 
-    logger?.info('Shift completion report prepared', { shiftId, chatId: targetChatId, reportData })
-
-    const message = formatReport(reportData)
-
     try {
+      logger?.info('Sending shift report', { shiftId, chatId: targetChatId })
+
+      const message = formatReport(reportData)
       const sentMessage = await bot.sendMessage(targetChatId, message)
       await repositories.shifts.saveGroupMessageId({ shiftId, messageId: sentMessage.message_id })
       logger?.info('Shift completion report sent', {
@@ -92,7 +91,35 @@ function createShiftReportService({ bot, logger, repositories, reportChatId }) {
         shiftId,
         chatId: targetChatId,
         error: error.message,
+        stack: error.stack,
       })
+    }
+  }
+
+  async function getProductionStats(shiftId) {
+    try {
+      const shiftPhotoStats = await repositories.holdPhotos?.getShiftPhotoStats?.(shiftId)
+      const holdsCount = toIntOrZero(shiftPhotoStats?.holdsCount)
+      const photosCountRaw = toIntOrZero(shiftPhotoStats?.photosCount)
+      const directusPhotosCount = toIntOrZero(shiftPhotoStats?.directusPhotosCount)
+      const photosCount = directusPhotosCount > 0 ? directusPhotosCount : photosCountRaw
+
+      logger?.info('Данные по трюмам для отчёта', {
+        shiftId,
+        holdsCount,
+        photosCount,
+        directusPhotosCount,
+      })
+
+      return { holdsCount, photosCount }
+    } catch (error) {
+      logger?.warn('Не удалось получить данные трюмов для отчёта', {
+        shiftId,
+        error: error.message,
+        stack: error.stack,
+      })
+
+      return { holdsCount: 0, photosCount: 0 }
     }
   }
 }
@@ -183,4 +210,4 @@ function normalizeName(str) {
     .join(' ')
 }
 
-module.exports = { createShiftReportService, DEFAULT_REPORT_CHAT_ID }
+module.exports = { createShiftReportService }

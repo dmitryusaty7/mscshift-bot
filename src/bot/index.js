@@ -35,6 +35,7 @@ function createBot({
       expenses: repositories.expenses,
       holdPhotos: repositories.holdPhotos,
       crew: repositories.crew,
+      holds: repositories.holds,
     },
     reportChatId,
   })
