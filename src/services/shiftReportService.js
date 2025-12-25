@@ -98,17 +98,20 @@ function createShiftReportService({ bot, logger, repositories, reportChatId }) {
 
   async function getProductionStats(shiftId) {
     try {
-      const photosCount = await repositories.holdPhotos?.countTotalByShift?.(shiftId)
-      const holdsWithCounts = await repositories.holds?.getHoldsWithCounts?.(shiftId)
+      const shiftPhotoStats = await repositories.holdPhotos?.getShiftPhotoStats?.(shiftId)
+      const holdsCount = toIntOrZero(shiftPhotoStats?.holdsCount)
+      const photosCountRaw = toIntOrZero(shiftPhotoStats?.photosCount)
+      const directusPhotosCount = toIntOrZero(shiftPhotoStats?.directusPhotosCount)
+      const photosCount = directusPhotosCount > 0 ? directusPhotosCount : photosCountRaw
 
-      const holdsCount = Array.isArray(holdsWithCounts)
-        ? holdsWithCounts.filter((hold) => toIntOrZero(hold.photos_count) > 0).length
-        : 0
-
-      return {
+      logger?.info('Данные по трюмам для отчёта', {
+        shiftId,
         holdsCount,
-        photosCount: toIntOrZero(photosCount),
-      }
+        photosCount,
+        directusPhotosCount,
+      })
+
+      return { holdsCount, photosCount }
     } catch (error) {
       logger?.warn('Не удалось получить данные трюмов для отчёта', {
         shiftId,

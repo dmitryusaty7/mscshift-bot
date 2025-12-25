@@ -9,6 +9,7 @@ function createHoldPhotosRepo(pool, logger) {
     deletePhotoById,
     countByHold,
     countTotalByShift,
+    getShiftPhotoStats,
   }
 
   // TODO: Review for merge — сохраняем запись о фото трюма
@@ -101,6 +102,34 @@ function createHoldPhotosRepo(pool, logger) {
     } catch (error) {
       // TODO: Review for merge — логируем ошибку подсчёта по смене
       await handleDbError({ error, operation: 'countTotalByShift', shiftId })
+      throw error
+    }
+  }
+
+  // Сводка по трюмам и фото для смены
+  async function getShiftPhotoStats(shiftId) {
+    try {
+      const { rows } = await pool.query(
+        `
+          SELECT
+            COUNT(DISTINCT hold_id)::int AS holds_count,
+            COUNT(*)::int AS photos_count,
+            COUNT(*) FILTER (WHERE disk_public_url IS NOT NULL)::int AS directus_photos_count
+          FROM hold_photos
+          WHERE shift_id = $1
+        `,
+        [shiftId],
+      )
+
+      const stats = rows[0] || {}
+
+      return {
+        holdsCount: Number.parseInt(stats.holds_count ?? '0', 10),
+        photosCount: Number.parseInt(stats.photos_count ?? '0', 10),
+        directusPhotosCount: Number.parseInt(stats.directus_photos_count ?? '0', 10),
+      }
+    } catch (error) {
+      await handleDbError({ error, operation: 'getShiftPhotoStats', shiftId })
       throw error
     }
   }
