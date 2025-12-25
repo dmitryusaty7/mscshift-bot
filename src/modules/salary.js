@@ -267,7 +267,7 @@ async function handleIntroInput({ bot, chatId, telegramId, text, messages, crewR
       return
     }
 
-    await renderSalaryHub({ bot, chatId, telegramId, messages, crewRepo, wagesRepo, withKeyboard: true })
+    await renderSalaryHub({ bot, chatId, telegramId, messages, crewRepo, wagesRepo })
     return
   }
 
@@ -320,7 +320,7 @@ async function handleBackNavigation({ bot, chatId, telegramId, messages, crewRep
 }
 
 // TODO: Review for merge — отображение хаба зарплаты
-async function renderSalaryHub({ bot, chatId, telegramId, messages, crewRepo, wagesRepo, withKeyboard = false }) {
+async function renderSalaryHub({ bot, chatId, telegramId, messages, crewRepo, wagesRepo }) {
   const session = salarySessions.get(telegramId)
 
   if (!session) {
@@ -422,16 +422,6 @@ async function renderSalaryHub({ bot, chatId, telegramId, messages, crewRepo, wa
 
   session.currentStep = SALARY_STEPS.HUB
   salarySessions.set(telegramId, session)
-
-  if (withKeyboard) {
-    await bot.sendMessage(chatId, messages.salary.hub.backToShift, {
-      // TODO: Review for merge — отправляем клавиатуру для возврата в меню без дополнительных подсказок
-      reply_markup: {
-        keyboard: [[{ text: messages.salary.hub.backToShift }]],
-        resize_keyboard: true,
-      },
-    })
-  }
 }
 
 // TODO: Review for merge — отображение формы ввода для роли
